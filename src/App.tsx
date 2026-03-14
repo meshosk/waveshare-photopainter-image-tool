@@ -16,15 +16,59 @@ function App() {
   const [image, setImage] = useState<LoadedImage | null>(null)
   const [crop, setCrop] = useState(INITIAL_CROP)
   const [zoom, setZoom] = useState(1)
+  const [cropSize, setCropSize] = useState<{ width: number; height: number } | undefined>(undefined)
+  const [mediaViewport, setMediaViewport] = useState<{
+    width: number
+    height: number
+    naturalWidth: number
+    naturalHeight: number
+  } | null>(null)
   const [orientation, setOrientation] = useState<Orientation>('landscape')
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area>(INITIAL_AREA)
   const [isExporting, setIsExporting] = useState(false)
-  const [status, setStatus] = useState('Nahraj obrazok a nastav vyrez pre PhotoPainter.')
+  const [status, setStatus] = useState('Upload an image and place the crop for PhotoPainter.')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const cropShellRef = useRef<HTMLDivElement | null>(null)
 
   const outputSize = OUTPUT_SIZES[orientation]
   const aspect = outputSize.width / outputSize.height
+
+  useEffect(() => {
+    const element = cropShellRef.current
+    if (!element) {
+      return
+    }
+
+    const updateCropSize = () => {
+      const bounds = element.getBoundingClientRect()
+      if (bounds.width <= 0 || bounds.height <= 0) {
+        return
+      }
+
+      const padding = 80
+      const availableWidth = Math.max(220, bounds.width - padding)
+      const availableHeight = Math.max(160, bounds.height - padding)
+
+      let width = availableWidth
+      let height = width / aspect
+
+      if (height > availableHeight) {
+        height = availableHeight
+        width = height * aspect
+      }
+
+      setCropSize({
+        width: Math.round(width),
+        height: Math.round(height),
+      })
+    }
+
+    updateCropSize()
+    const observer = new ResizeObserver(updateCropSize)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [aspect, image])
 
   useEffect(() => {
     return () => {
@@ -59,7 +103,16 @@ function App() {
         croppedAreaPixels,
         outputSize.width,
         outputSize.height,
+        cropSize && mediaViewport
+          ? {
+              crop,
+              zoom,
+              cropSize,
+              media: mediaViewport,
+            }
+          : undefined,
       )
+      forceOpaqueWhite(cropped)
       const dithered = applyPaletteWithDithering(cropped)
       const canvas = document.createElement('canvas')
       canvas.width = outputSize.width
@@ -99,7 +152,7 @@ function App() {
       isCancelled = true
       window.clearTimeout(timeout)
     }
-  }, [croppedAreaPixels, image, outputSize.height, outputSize.width])
+  }, [crop, cropSize, croppedAreaPixels, image, mediaViewport, outputSize.height, outputSize.width, zoom])
 
   const paletteLabels = useMemo(
     () => PHOTO_PAINTER_PALETTE.map((entry) => entry.name).join(', '),
@@ -125,12 +178,13 @@ function App() {
         }
         return loaded
       })
+      setMediaViewport(null)
       setCrop(INITIAL_CROP)
-      setZoom(0.85)
-      setStatus(`Nacitany subor ${loaded.name}. Uprav vyrez a exportuj BMP.`)
+      setZoom(1)
+      setStatus(`Loaded file ${loaded.name}. Adjust the crop and export BMP.`)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Neznamy problem pri nacitani suboru.'
-      setStatus(`Import zlyhal: ${message}`)
+      const message = error instanceof Error ? error.message : 'Unknown problem while loading the file.'
+      setStatus(`Import failed: ${message}`)
     }
   }
 
@@ -150,7 +204,7 @@ function App() {
     }
 
     setIsExporting(true)
-    setStatus('Pripravujem export pre PhotoPainter...')
+    setStatus('Preparing export for PhotoPainter...')
 
     try {
       const sourceImage = await getImageElement(image.src)
@@ -159,7 +213,16 @@ function App() {
         croppedAreaPixels,
         outputSize.width,
         outputSize.height,
+        cropSize && mediaViewport
+          ? {
+              crop,
+              zoom,
+              cropSize,
+              media: mediaViewport,
+            }
+          : undefined,
       )
+      forceOpaqueWhite(cropped)
       const dithered = applyPaletteWithDithering(cropped)
       const bmp = imageDataToBmp(dithered)
       const defaultName = buildWaveshareFileName(image.name)
@@ -169,48 +232,43 @@ function App() {
         const result = await saveBridge({ defaultName, data: bmp })
         setStatus(
           result.canceled
-            ? 'Export bol zruseny.'
-            : `BMP uspesne ulozene: ${result.filePath ?? defaultName}. Pri kopirovani na SD nechaj v /pic iba BMP subory.`,
+            ? 'Export was canceled.'
+            : `BMP saved successfully: ${result.filePath ?? defaultName}. Keep only BMP files in /pic when copying to SD.`,
         )
       } else {
         const browserResult = await saveBmpInBrowser(defaultName, bmp)
         setStatus(
           browserResult.canceled
-            ? 'Export bol zruseny.'
+            ? 'Export was canceled.'
             : browserResult.pathHint
-              ? `BMP uspesne ulozene: ${browserResult.pathHint}. Pri kopirovani na SD nechaj v /pic iba BMP subory.`
-              : `BMP stiahnute v prehliadaci: ${defaultName}. Pri kopirovani na SD nechaj v /pic iba BMP subory.`,
+              ? `BMP saved successfully: ${browserResult.pathHint}. Keep only BMP files in /pic when copying to SD.`
+              : `BMP downloaded in browser: ${defaultName}. Keep only BMP files in /pic when copying to SD.`,
         )
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Neznamy problem pri exporte.'
-      setStatus(`Export zlyhal: ${message}`)
+      const message = error instanceof Error ? error.message : 'Unknown problem during export.'
+      setStatus(`Export failed: ${message}`)
     } finally {
       setIsExporting(false)
     }
-  }
-
-  const resetView = () => {
-    setCrop(INITIAL_CROP)
-    setZoom(0.85)
   }
 
   return (
     <div className="shell">
       <aside className="sidebar">
         <div>
-          <p className="eyebrow">Waveshare PhotoPainter</p>
-          <h1>Converter s interaktivnym vyrezom a 7-farebnym ditheringom</h1>
+          <p className="eyebrow">The meshosk and AI presents</p>
+          <h1>Waveshare PhotoPainter image tool</h1>
           <p className="lede">
-            Nahraj fotografiu, nastav presny vyrez, prepni orientaciu a exportuj 24-bit BMP v rozliseni
-            800 x 480 alebo 480 x 800.
+            Upload a photo, place the exact crop, switch orientation, and export a 24-bit BMP at
+            800 x 480 or 480 x 800.
           </p>
         </div>
 
         <section className="panel stack">
-          <h2>Vstup</h2>
+          <h2>Input</h2>
           <button className="primary" type="button" onClick={() => inputRef.current?.click()}>
-            Vybrat obrazok
+            Select image
           </button>
           <input
             ref={inputRef}
@@ -219,11 +277,11 @@ function App() {
             type="file"
             onChange={handleFileSelection}
           />
-          <p className="muted">Podporovane formaty: JPG, PNG, WebP, BMP, GIF, HEIC.</p>
+          <p className="muted">Supported formats: JPG, PNG, WebP, BMP, GIF, HEIC.</p>
         </section>
 
         <section className="panel stack">
-          <h2>Vystup</h2>
+          <h2>Output</h2>
           <div className="segmented">
             <button
               type="button"
@@ -256,36 +314,41 @@ function App() {
           />
 
           <div className="zoom-row">
-            <button type="button" className="secondary" onClick={() => setZoom((current) => Math.max(MIN_ZOOM, current - 0.1))}>
-              Oddialit
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setZoom((current) => Math.max(MIN_ZOOM, current - 0.1))}
+            >
+              Zoom out
             </button>
-            <button type="button" className="secondary" onClick={resetView}>
-              Fit
-            </button>
-            <button type="button" className="secondary" onClick={() => setZoom((current) => Math.min(MAX_ZOOM, current + 0.1))}>
-              Priblizit
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setZoom((current) => Math.min(MAX_ZOOM, current + 0.1))}
+            >
+              Zoom in
             </button>
           </div>
-          <p className="muted">Vyrez umiestnuj priamo mysou na zdrojovom obrazku. Zoom meni mierku podkladoveho obrazka.</p>
+          <p className="muted">Place the crop directly on the source image with your mouse. Zoom changes image scale.</p>
 
           <button className="primary" type="button" disabled={!image || isExporting} onClick={handleExport}>
-            {isExporting ? 'Exportujem...' : 'Export BMP'}
+            {isExporting ? 'Exporting...' : 'Export BMP'}
           </button>
           <p className="muted">{status}</p>
         </section>
 
         <section className="panel stack">
-          <h2>Paleta</h2>
+          <h2>Palette</h2>
           <p className="muted">{paletteLabels}</p>
-          <p className="muted">Pouziva sa Floyd-Steinberg dithering pre lepsi detail na e-paperi.</p>
+          <p className="muted">Floyd-Steinberg dithering is used for better detail on e-paper.</p>
           {image ? (
             <dl className="meta">
               <div>
-                <dt>Zdroj</dt>
+                <dt>Source</dt>
                 <dd>{image.width} x {image.height}</dd>
               </div>
               <div>
-                <dt>Subor</dt>
+                <dt>File</dt>
                 <dd>{image.name}</dd>
               </div>
             </dl>
@@ -303,7 +366,7 @@ function App() {
           }}
         >
           {image ? (
-            <div className="crop-shell">
+            <div className="crop-shell" ref={cropShellRef}>
               <Cropper
                 image={image.src}
                 crop={crop}
@@ -311,18 +374,28 @@ function App() {
                 minZoom={MIN_ZOOM}
                 maxZoom={MAX_ZOOM}
                 aspect={aspect}
+                cropSize={cropSize}
                 showGrid={true}
                 objectFit="contain"
+                restrictPosition={false}
                 onCropChange={setCrop}
-                onZoomChange={setZoom}
+                onZoomChange={(value) => setZoom(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value)))}
                 onCropComplete={(_area, pixels) => setCroppedAreaPixels(pixels)}
+                onMediaLoaded={(media) =>
+                  setMediaViewport({
+                    width: media.width,
+                    height: media.height,
+                    naturalWidth: media.naturalWidth ?? media.width,
+                    naturalHeight: media.naturalHeight ?? media.height,
+                  })
+                }
               />
-              <div className="frame-badge">Vyrez pre {outputSize.width} x {outputSize.height}</div>
+              <div className="frame-badge">Crop for {outputSize.width} x {outputSize.height}</div>
             </div>
           ) : (
             <div className="dropzone-empty">
-              <p>Pretiahni obrazok sem</p>
-              <span>alebo pouzi tlacidlo Vybrat obrazok</span>
+              <p>Drag an image here</p>
+              <span>or use the Select image button</span>
             </div>
           )}
         </section>
@@ -335,10 +408,10 @@ function App() {
           <div className="preview-stage">
             {previewUrl ? (
               <div className="preview-canvas">
-                <img src={previewUrl} alt="Preview pre PhotoPainter" />
+                <img src={previewUrl} alt="Preview for PhotoPainter" />
               </div>
             ) : (
-              <div className="preview-placeholder">Preview sa zobrazi po nacitani obrazka.</div>
+              <div className="preview-placeholder">Preview will appear after loading an image.</div>
             )}
           </div>
         </section>
@@ -359,6 +432,19 @@ const buildWaveshareFileName = (name: string) => {
 }
 
 const stripExtension = (name: string) => name.replace(/\.[^.]+$/, '')
+
+const forceOpaqueWhite = (imageData: ImageData) => {
+  const { data } = imageData
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = data[index + 3]
+    if (alpha < 255) {
+      data[index] = 255
+      data[index + 1] = 255
+      data[index + 2] = 255
+    }
+    data[index + 3] = 255
+  }
+}
 
 const saveBmpInBrowser = async (fileName: string, data: Uint8Array) => {
   const picker = (

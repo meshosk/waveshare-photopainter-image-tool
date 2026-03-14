@@ -1,6 +1,10 @@
+# !!! DISCLAIMER !!!
+
+Keep in mind, that I'm lazy... very lazy... so this whole app is prompted... Yes, shame on me... It works... somehow...
+
 # PhotoPainter Converter
 
-Desktop app for preparing images for Waveshare PhotoPainter without any local server.
+Desktop app in electron??? for preparing images for Waveshare PhotoPainter without any local server.
 
 ## Features
 
@@ -9,6 +13,34 @@ Desktop app for preparing images for Waveshare PhotoPainter without any local se
 - Landscape `800 x 480` and portrait `480 x 800`
 - Floyd-Steinberg dithering to a 7-color e-paper palette
 - Exports uncompressed 24-bit BMP
+
+## Ovladanie
+
+1. Klikni na Vybrat obrazok a nahraj vstupnu fotku.
+2. Vyber orientaciu vystupu:
+	- 800 x 480 (landscape)
+	- 480 x 800 (portrait)
+3. Umiestni vyrez priamo mysou na zdrojovom obrazku.
+4. Pouzi zoom slider alebo tlacidla Oddialit a Priblizit.
+5. Preview panel zobrazuje realny vysledok vyrezu.
+6. Ak cast vyrezu siaha mimo zdrojovy obrazok, tato cast je biela.
+7. Klikni na Export BMP a uloz vystupny subor.
+
+## Spustenie cez Vite
+
+### Vite dev (live reload)
+
+1. docker compose up dev
+2. otvor http://localhost:5173
+
+### Vite preview (produkcny build)
+
+1. docker compose up preview
+2. otvor http://localhost:4173
+
+### Zastavenie sluzieb
+
+1. docker compose down
 
 ## Docker workflow
 
