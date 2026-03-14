@@ -1,4 +1,5 @@
 export type RGB = [number, number, number]
+type Lab = [number, number, number]
 
 export const PHOTO_PAINTER_PALETTE: Array<{ name: string; rgb: RGB }> = [
   { name: 'Black', rgb: [0, 0, 0] },
@@ -10,27 +11,74 @@ export const PHOTO_PAINTER_PALETTE: Array<{ name: string; rgb: RGB }> = [
   { name: 'Orange', rgb: [255, 128, 0] },
 ]
 
-const distanceSquared = (a: RGB, b: RGB) => {
-  const dr = a[0] - b[0]
-  const dg = a[1] - b[1]
-  const db = a[2] - b[2]
-  return dr * dr + dg * dg + db * db
+// --- Perceptual color distance via CIE L*a*b* ---
+
+const rgbToLab = (rgb: RGB): Lab => {
+  // Linearize sRGB
+  const lin = (c: number) => {
+    const n = c / 255
+    return n > 0.04045 ? Math.pow((n + 0.055) / 1.055, 2.4) : n / 12.92
+  }
+  const r = lin(rgb[0])
+  const g = lin(rgb[1])
+  const b = lin(rgb[2])
+
+  // sRGB → XYZ D65
+  const x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047
+  const y = (r * 0.2126729 + g * 0.7151522 + b * 0.0721750) / 1.00000
+  const z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883
+
+  // XYZ → L*a*b*
+  const f = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116)
+  return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))]
 }
 
+const labDistanceSquared = (a: Lab, b: Lab) => {
+  const dL = a[0] - b[0]
+  const da = a[1] - b[1]
+  const db = a[2] - b[2]
+  return dL * dL + da * da + db * db
+}
+
+// Pre-compute Lab values for the palette once
+const PALETTE_LAB = PHOTO_PAINTER_PALETTE.map(({ rgb }) => rgbToLab(rgb))
+
 export const nearestPaletteColor = (rgb: RGB): RGB => {
+  const lab = rgbToLab(rgb)
   let nearest = PHOTO_PAINTER_PALETTE[0].rgb
   let nearestDistance = Number.POSITIVE_INFINITY
 
-  for (const { rgb: candidate } of PHOTO_PAINTER_PALETTE) {
-    const distance = distanceSquared(rgb, candidate)
+  for (let i = 0; i < PALETTE_LAB.length; i++) {
+    const distance = labDistanceSquared(lab, PALETTE_LAB[i])
     if (distance < nearestDistance) {
       nearestDistance = distance
-      nearest = candidate
+      nearest = PHOTO_PAINTER_PALETTE[i].rgb
     }
   }
 
   return nearest
 }
+
+// --- Stucki dithering (wider error spread than Floyd-Steinberg) ---
+//
+//           *   8   4
+//   2   4   8   4   2     ÷ 42
+//   1   2   4   2   1
+
+const STUCKI: Array<[dx: number, dy: number, weight: number]> = [
+  [1, 0, 8 / 42],
+  [2, 0, 4 / 42],
+  [-2, 1, 2 / 42],
+  [-1, 1, 4 / 42],
+  [0, 1, 8 / 42],
+  [1, 1, 4 / 42],
+  [2, 1, 2 / 42],
+  [-2, 2, 1 / 42],
+  [-1, 2, 2 / 42],
+  [0, 2, 4 / 42],
+  [1, 2, 2 / 42],
+  [2, 2, 1 / 42],
+]
 
 export const applyPaletteWithDithering = (imageData: ImageData): ImageData => {
   const { width, height, data } = imageData
@@ -55,10 +103,9 @@ export const applyPaletteWithDithering = (imageData: ImageData): ImageData => {
       const errorG = original[1] - mapped[1]
       const errorB = original[2] - mapped[2]
 
-      distributeError(buffer, width, height, x + 1, y, errorR, errorG, errorB, 7 / 16)
-      distributeError(buffer, width, height, x - 1, y + 1, errorR, errorG, errorB, 3 / 16)
-      distributeError(buffer, width, height, x, y + 1, errorR, errorG, errorB, 5 / 16)
-      distributeError(buffer, width, height, x + 1, y + 1, errorR, errorG, errorB, 1 / 16)
+      for (const [dx, dy, weight] of STUCKI) {
+        distributeError(buffer, width, height, x + dx, y + dy, errorR, errorG, errorB, weight)
+      }
     }
   }
 
