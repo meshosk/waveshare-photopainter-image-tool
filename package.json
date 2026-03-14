@@ -12,7 +12,8 @@
     "build": "npm run typecheck && npm run build:renderer",
     "preview": "vite preview",
     "start": "npm run build:renderer && electron .",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "dist:ci": "npm run build && electron-builder --publish never"
   },
   "dependencies": {
     "heic-to": "^1.3.0",
