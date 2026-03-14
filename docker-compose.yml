@@ -1,0 +1,32 @@
+services:
+  node:
+    image: node:22-bookworm
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      - npm_config_cache=/tmp/npm-cache
+
+  dev:
+    image: node:22-bookworm
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      - npm_config_cache=/tmp/npm-cache
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+    command: sh -lc "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+
+  preview:
+    image: node:22-bookworm
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      - npm_config_cache=/tmp/npm-cache
+    command: sh -lc "npm install && npm run build:renderer && npm run preview -- --host 0.0.0.0 --port 4173"
+    ports:
+      - "4173:4173"

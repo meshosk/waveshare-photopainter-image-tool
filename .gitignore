@@ -1,0 +1,33 @@
+node_modules
+dist
+release
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build caches
+.vite
+coverage
+
+# Electron packaging
+*.dmg
+*.exe
+*.AppImage
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+tmp/
+temp/
