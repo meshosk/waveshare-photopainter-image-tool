@@ -4,8 +4,49 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PhotoPainter Converter</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background:
+          radial-gradient(circle at top left, rgba(239, 207, 148, 0.58), transparent 34%),
+          radial-gradient(circle at top right, rgba(205, 89, 65, 0.12), transparent 26%),
+          linear-gradient(140deg, #f5eee2 0%, #efe7d6 44%, #e5dccd 100%);
+      }
+      #splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
+        color: #6b5e4e;
+        font-size: 15px;
+        z-index: 9999;
+        transition: opacity 0.25s ease;
+      }
+      #splash.hiding {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #splash svg {
+        animation: splash-spin 0.9s linear infinite;
+      }
+      @keyframes splash-spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
   </head>
   <body>
+    <div id="splash">
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="18" cy="18" r="15" stroke="#d4b896" stroke-width="3" />
+        <path d="M18 3 A15 15 0 0 1 33 18" stroke="#a0714a" stroke-width="3" stroke-linecap="round" />
+      </svg>
+      <span>Loading PhotoPainter Converter&hellip;</span>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -4,7 +4,9 @@ const fsSync = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 
-app.disableHardwareAcceleration()
+app.commandLine.appendSwitch('enable-gpu-rasterization')
+app.commandLine.appendSwitch('enable-zero-copy')
+app.commandLine.appendSwitch('ignore-gpu-blocklist')
 
 const FALLBACK_LOG_PATHS = [
   path.join(os.homedir(), 'Library', 'Logs', 'photopainter-converter', 'runtime.log'),
