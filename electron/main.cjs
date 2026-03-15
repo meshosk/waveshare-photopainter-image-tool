@@ -199,6 +199,48 @@ ipcMain.handle('dialog:save-bmp', async (_event, payload) => {
   return { canceled: false, filePath: result.filePath }
 })
 
+ipcMain.handle('dialog:select-directory', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select export folder',
+    properties: ['openDirectory', 'createDirectory'],
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true }
+  }
+
+  return {
+    canceled: false,
+    folderPath: result.filePaths[0],
+  }
+})
+
+ipcMain.handle('dialog:export-batch-bmp', async (_event, payload) => {
+  const { folderPath, files } = payload
+  const failed = []
+  let savedCount = 0
+
+  for (const file of files) {
+    const destination = path.join(folderPath, file.fileName)
+    try {
+      await fs.writeFile(destination, Buffer.from(file.data))
+      savedCount += 1
+    } catch (error) {
+      failed.push({
+        fileName: file.fileName,
+        message: error instanceof Error ? error.message : 'Unknown write error',
+      })
+    }
+  }
+
+  return {
+    canceled: false,
+    folderPath,
+    savedCount,
+    failed,
+  }
+})
+
 app.whenReady().then(async () => {
   appendRuntimeLog('app.whenReady', {
     userDataPath: app.getPath('userData'),

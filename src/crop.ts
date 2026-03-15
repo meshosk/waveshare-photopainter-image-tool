@@ -32,6 +32,7 @@ export const renderCroppedImage = async (
   outputWidth: number,
   outputHeight: number,
   transform?: CropViewportTransform,
+  rotationDeg = 0,
 ) => {
   const canvas = document.createElement('canvas')
   canvas.width = outputWidth
@@ -50,42 +51,47 @@ export const renderCroppedImage = async (
   context.imageSmoothingQuality = 'high'
 
   if (transform) {
-    const renderedWidth = transform.media.width * transform.zoom
-    const renderedHeight = transform.media.height * transform.zoom
     const cropWidth = transform.cropSize.width
     const cropHeight = transform.cropSize.height
 
-    if (renderedWidth > 0 && renderedHeight > 0 && cropWidth > 0 && cropHeight > 0) {
-      const mediaLeft = (cropWidth - renderedWidth) / 2 + transform.crop.x
-      const mediaTop = (cropHeight - renderedHeight) / 2 + transform.crop.y
-      const mediaRight = mediaLeft + renderedWidth
-      const mediaBottom = mediaTop + renderedHeight
+    if (cropWidth > 0 && cropHeight > 0) {
+      const viewportCanvas = document.createElement('canvas')
+      viewportCanvas.width = Math.round(cropWidth)
+      viewportCanvas.height = Math.round(cropHeight)
 
-      const intersectionLeft = Math.max(0, mediaLeft)
-      const intersectionTop = Math.max(0, mediaTop)
-      const intersectionRight = Math.min(cropWidth, mediaRight)
-      const intersectionBottom = Math.min(cropHeight, mediaBottom)
-      const intersectionWidth = intersectionRight - intersectionLeft
-      const intersectionHeight = intersectionBottom - intersectionTop
-
-      if (intersectionWidth > 0 && intersectionHeight > 0) {
-        const srcX = ((intersectionLeft - mediaLeft) / renderedWidth) * transform.media.naturalWidth
-        const srcY = ((intersectionTop - mediaTop) / renderedHeight) * transform.media.naturalHeight
-        const srcW = (intersectionWidth / renderedWidth) * transform.media.naturalWidth
-        const srcH = (intersectionHeight / renderedHeight) * transform.media.naturalHeight
-
-        const destX = (intersectionLeft / cropWidth) * outputWidth
-        const destY = (intersectionTop / cropHeight) * outputHeight
-        const destW = (intersectionWidth / cropWidth) * outputWidth
-        const destH = (intersectionHeight / cropHeight) * outputHeight
-
-        context.drawImage(image, srcX, srcY, srcW, srcH, destX, destY, destW, destH)
+      const viewportContext = viewportCanvas.getContext('2d')
+      if (!viewportContext) {
+        throw new Error('Canvas 2D context is unavailable')
       }
+
+      viewportContext.fillStyle = '#ffffff'
+      viewportContext.fillRect(0, 0, viewportCanvas.width, viewportCanvas.height)
+      viewportContext.imageSmoothingEnabled = true
+      viewportContext.imageSmoothingQuality = 'high'
+
+      viewportContext.save()
+      viewportContext.translate(
+        viewportCanvas.width / 2 + transform.crop.x,
+        viewportCanvas.height / 2 + transform.crop.y,
+      )
+      viewportContext.rotate((rotationDeg * Math.PI) / 180)
+      viewportContext.scale(transform.zoom, transform.zoom)
+      viewportContext.drawImage(
+        image,
+        -transform.media.width / 2,
+        -transform.media.height / 2,
+        transform.media.width,
+        transform.media.height,
+      )
+      viewportContext.restore()
+
+      context.drawImage(viewportCanvas, 0, 0, outputWidth, outputHeight)
 
       return context.getImageData(0, 0, outputWidth, outputHeight)
     }
   }
 
+  const source = getCropSource(image, rotationDeg)
   const cropX = croppedAreaPixels.x
   const cropY = croppedAreaPixels.y
   const cropW = croppedAreaPixels.width
@@ -97,8 +103,8 @@ export const renderCroppedImage = async (
 
   const srcX = Math.max(0, cropX)
   const srcY = Math.max(0, cropY)
-  const srcRight = Math.min(image.naturalWidth, cropX + cropW)
-  const srcBottom = Math.min(image.naturalHeight, cropY + cropH)
+  const srcRight = Math.min(source.width, cropX + cropW)
+  const srcBottom = Math.min(source.height, cropY + cropH)
   const srcW = srcRight - srcX
   const srcH = srcBottom - srcY
 
@@ -110,8 +116,63 @@ export const renderCroppedImage = async (
     const destW = srcW * scaleX
     const destH = srcH * scaleY
 
-    context.drawImage(image, srcX, srcY, srcW, srcH, destX, destY, destW, destH)
+    context.drawImage(source.canvas, srcX, srcY, srcW, srcH, destX, destY, destW, destH)
   }
 
   return context.getImageData(0, 0, outputWidth, outputHeight)
+}
+
+const getCropSource = (image: HTMLImageElement, rotationDeg: number) => {
+  const normalizedRotation = ((rotationDeg % 360) + 360) % 360
+  if (normalizedRotation === 0) {
+    const sourceCanvas = document.createElement('canvas')
+    sourceCanvas.width = image.naturalWidth
+    sourceCanvas.height = image.naturalHeight
+    const sourceContext = sourceCanvas.getContext('2d')
+    if (!sourceContext) {
+      throw new Error('Canvas 2D context is unavailable')
+    }
+
+    sourceContext.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight)
+    return {
+      canvas: sourceCanvas,
+      width: sourceCanvas.width,
+      height: sourceCanvas.height,
+    }
+  }
+
+  const radians = (normalizedRotation * Math.PI) / 180
+  const cos = Math.abs(Math.cos(radians))
+  const sin = Math.abs(Math.sin(radians))
+  const rotatedWidth = Math.max(1, Math.round(image.naturalWidth * cos + image.naturalHeight * sin))
+  const rotatedHeight = Math.max(1, Math.round(image.naturalWidth * sin + image.naturalHeight * cos))
+
+  const rotatedCanvas = document.createElement('canvas')
+  rotatedCanvas.width = rotatedWidth
+  rotatedCanvas.height = rotatedHeight
+
+  const rotatedContext = rotatedCanvas.getContext('2d')
+  if (!rotatedContext) {
+    throw new Error('Canvas 2D context is unavailable')
+  }
+
+  rotatedContext.fillStyle = '#ffffff'
+  rotatedContext.fillRect(0, 0, rotatedWidth, rotatedHeight)
+  rotatedContext.save()
+  rotatedContext.translate(rotatedWidth / 2, rotatedHeight / 2)
+  rotatedContext.rotate(radians)
+  rotatedContext.drawImage(
+    image,
+    -image.naturalWidth / 2,
+    -image.naturalHeight / 2,
+    image.naturalWidth,
+    image.naturalHeight,
+  )
+  rotatedContext.restore()
+
+  return {
+    canvas: rotatedCanvas,
+    width: rotatedWidth,
+    height: rotatedHeight,
+  }
 }

@@ -8,9 +8,30 @@ import { getImageElement, loadImageFile, releaseImage, type LoadedImage } from '
 const ACCEPTED_FORMATS = '.jpg,.jpeg,.png,.webp,.bmp,.gif,.heic,.heif'
 
 const INITIAL_CROP = { x: 0, y: 0 }
-const INITIAL_AREA: Area = { x: 0, y: 0, width: 800, height: 480 }
 const MIN_ZOOM = 0.4
 const MAX_ZOOM = 5
+const ROTATION_STEP = 90
+
+type ImageEntry = {
+  id: string
+  image: LoadedImage
+  crop: { x: number; y: number }
+  zoom: number
+  croppedAreaPixels: Area
+  orientation: Orientation
+  rotationDeg: number
+  mediaViewport: {
+    width: number
+    height: number
+    naturalWidth: number
+    naturalHeight: number
+  } | null
+}
+
+type BatchExportFile = {
+  fileName: string
+  data: Uint8Array
+}
 
 function clampCrop(
   crop: { x: number; y: number },
@@ -29,37 +50,38 @@ function clampCrop(
 }
 
 function App() {
-  const [image, setImage] = useState<LoadedImage | null>(null)
-  const [crop, setCrop] = useState(INITIAL_CROP)
-  const [zoom, setZoom] = useState(1)
+  const [images, setImages] = useState<ImageEntry[]>([])
+  const [activeImageId, setActiveImageId] = useState<string | null>(null)
   const [cropSize, setCropSize] = useState<{ width: number; height: number } | undefined>(undefined)
-  const [mediaViewport, setMediaViewport] = useState<{
-    width: number
-    height: number
-    naturalWidth: number
-    naturalHeight: number
-  } | null>(null)
-  const [orientation, setOrientation] = useState<Orientation>('landscape')
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area>(INITIAL_AREA)
   const [constrainToImage, setConstrainToImage] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
-  const [status, setStatus] = useState('Upload an image and place the crop for PhotoPainter.')
+  const [status, setStatus] = useState('Upload one or more images, set crop for each, and export BMP files.')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const cropShellRef = useRef<HTMLDivElement | null>(null)
+  const imagesRef = useRef<ImageEntry[]>([])
 
-  const outputSize = OUTPUT_SIZES[orientation]
+  const activeImage = useMemo(
+    () => images.find((entry) => entry.id === activeImageId) ?? null,
+    [activeImageId, images],
+  )
+
+  const outputSize = activeImage ? OUTPUT_SIZES[activeImage.orientation] : OUTPUT_SIZES.landscape
   const aspect = outputSize.width / outputSize.height
 
   const minZoomToFit =
-    cropSize && mediaViewport
+    cropSize && activeImage?.mediaViewport
       ? Math.max(
-          cropSize.width / mediaViewport.width,
-          cropSize.height / mediaViewport.height,
+          cropSize.width / activeImage.mediaViewport.width,
+          cropSize.height / activeImage.mediaViewport.height,
         )
       : MIN_ZOOM
 
   const effectiveMinZoom = constrainToImage ? Math.max(MIN_ZOOM, minZoomToFit) : MIN_ZOOM
+
+  useEffect(() => {
+    imagesRef.current = images
+  }, [images])
 
   useEffect(() => {
     const element = cropShellRef.current
@@ -95,15 +117,15 @@ function App() {
     const observer = new ResizeObserver(updateCropSize)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [aspect, image])
+  }, [aspect, activeImageId])
 
   useEffect(() => {
     return () => {
-      if (image) {
-        releaseImage(image.src)
+      for (const entry of imagesRef.current) {
+        releaseImage(entry.image.src)
       }
     }
-  }, [image])
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -117,27 +139,21 @@ function App() {
     let isCancelled = false
 
     const renderPreview = async () => {
-      if (!image) {
+      if (!activeImage) {
         if (!isCancelled) {
           setPreviewUrl(null)
         }
         return
       }
 
-      const previewImage = await getImageElement(image.src)
+      const previewImage = await getImageElement(activeImage.image.src)
       const cropped = await renderCroppedImage(
         previewImage,
-        croppedAreaPixels,
+        activeImage.croppedAreaPixels,
         outputSize.width,
         outputSize.height,
-        cropSize && mediaViewport
-          ? {
-              crop,
-              zoom,
-              cropSize,
-              media: mediaViewport,
-            }
-          : undefined,
+        undefined,
+        activeImage.rotationDeg,
       )
       forceOpaqueWhite(cropped)
       const dithered = applyPaletteWithDithering(cropped)
@@ -179,18 +195,38 @@ function App() {
       isCancelled = true
       window.clearTimeout(timeout)
     }
-  }, [crop, cropSize, croppedAreaPixels, image, mediaViewport, outputSize.height, outputSize.width, zoom])
+  }, [
+    activeImage?.crop.x,
+    activeImage?.crop.y,
+    activeImage?.croppedAreaPixels.height,
+    activeImage?.croppedAreaPixels.width,
+    activeImage?.croppedAreaPixels.x,
+    activeImage?.croppedAreaPixels.y,
+    activeImage?.image.src,
+    activeImage?.orientation,
+    activeImage?.rotationDeg,
+    activeImage?.zoom,
+    outputSize.height,
+    outputSize.width,
+  ])
 
   useEffect(() => {
-    if (constrainToImage && cropSize && mediaViewport) {
-      const minZoom = Math.max(MIN_ZOOM, Math.max(
-        cropSize.width / mediaViewport.width,
-        cropSize.height / mediaViewport.height,
-      ))
-      setZoom((prev) => {
-        const snapped = Math.max(prev, minZoom)
-        setCrop((prevCrop) => clampCrop(prevCrop, cropSize, mediaViewport, snapped))
-        return snapped
+    if (constrainToImage && cropSize && activeImage?.mediaViewport) {
+      const minZoom = Math.max(
+        MIN_ZOOM,
+        Math.max(
+          cropSize.width / activeImage.mediaViewport.width,
+          cropSize.height / activeImage.mediaViewport.height,
+        ),
+      )
+
+      updateActiveImage((entry) => {
+        const snapped = Math.max(entry.zoom, minZoom)
+        return {
+          ...entry,
+          zoom: snapped,
+          crop: clampCrop(entry.crop, cropSize, entry.mediaViewport ?? { width: 1, height: 1 }, snapped),
+        }
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,92 +237,169 @@ function App() {
     [],
   )
 
-  const handleFileSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = event.target.files?.[0]
-    if (!selectedFile) {
+  const updateActiveImage = (updater: (entry: ImageEntry) => ImageEntry) => {
+    if (!activeImageId) {
       return
     }
 
-    await importImage(selectedFile)
+    setImages((current) =>
+      current.map((entry) => (entry.id === activeImageId ? updater(entry) : entry)),
+    )
+  }
+
+  const rotateActiveImage = (delta: number) => {
+    updateActiveImage((entry) => ({
+      ...entry,
+      rotationDeg: normalizeRotation(entry.rotationDeg + delta),
+    }))
+  }
+
+  const handleFileSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.target.files ?? [])
+    if (selectedFiles.length === 0) {
+      return
+    }
+
+    await importImages(selectedFiles)
     event.target.value = ''
   }
 
-  const importImage = async (file: File) => {
-    try {
-      const loaded = await loadImageFile(file)
-      setImage((current) => {
-        if (current) {
-          releaseImage(current.src)
-        }
-        return loaded
-      })
-      setMediaViewport(null)
-      setCrop(INITIAL_CROP)
-      setZoom(1)
-      setStatus(`Loaded file ${loaded.name}. Adjust the crop and export BMP.`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown problem while loading the file.'
-      setStatus(`Import failed: ${message}`)
+  const importImages = async (files: File[]) => {
+    const loadedEntries: ImageEntry[] = []
+    const failures: string[] = []
+
+    for (const file of files) {
+      try {
+        const loaded = await loadImageFile(file)
+        loadedEntries.push(createImageEntry(loaded))
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : 'Unknown problem while loading file.')
+      }
     }
+
+    if (loadedEntries.length > 0) {
+      setImages((current) => [...current, ...loadedEntries])
+      setActiveImageId((current) => current ?? loadedEntries[0].id)
+    }
+
+    if (loadedEntries.length > 0 && failures.length === 0) {
+      setStatus(`Loaded ${loadedEntries.length} image(s). Select thumbnail and adjust crop before export.`)
+      return
+    }
+
+    if (loadedEntries.length > 0) {
+      setStatus(`Loaded ${loadedEntries.length} image(s). ${failures.length} file(s) failed to import.`)
+      return
+    }
+
+    setStatus(`Import failed: ${failures[0] ?? 'No supported image file found.'}`)
   }
 
   const handleDrop = async (event: React.DragEvent<HTMLElement>) => {
     event.preventDefault()
-    const file = event.dataTransfer.files?.[0]
-    if (!file) {
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length === 0) {
       return
     }
 
-    await importImage(file)
+    await importImages(files)
   }
 
-  const handleExport = async () => {
-    if (!image) {
+  const removeImage = (id: string) => {
+    setImages((current) => {
+      const target = current.find((entry) => entry.id === id)
+      if (target) {
+        releaseImage(target.image.src)
+      }
+
+      const next = current.filter((entry) => entry.id !== id)
+      setActiveImageId((active) => {
+        if (active !== id) {
+          return active
+        }
+        return next[0]?.id ?? null
+      })
+
+      if (next.length === 0) {
+        setStatus('Upload one or more images, set crop for each, and export BMP files.')
+      }
+
+      return next
+    })
+  }
+
+  const handleExportAll = async () => {
+    if (images.length === 0) {
       return
     }
 
     setIsExporting(true)
-    setStatus('Preparing export for PhotoPainter...')
+    setStatus(`Preparing ${images.length} export(s) for PhotoPainter...`)
 
     try {
-      const sourceImage = await getImageElement(image.src)
-      const cropped = await renderCroppedImage(
-        sourceImage,
-        croppedAreaPixels,
-        outputSize.width,
-        outputSize.height,
-        cropSize && mediaViewport
-          ? {
-              crop,
-              zoom,
-              cropSize,
-              media: mediaViewport,
-            }
-          : undefined,
-      )
-      forceOpaqueWhite(cropped)
-      const dithered = applyPaletteWithDithering(cropped)
-      const bmp = imageDataToBmp(dithered)
-      const defaultName = buildWaveshareFileName(image.name)
-      const saveBridge = window.desktopBridge?.saveBmp
+      const encodedFiles: BatchExportFile[] = []
 
-      if (typeof saveBridge === 'function') {
-        const result = await saveBridge({ defaultName, data: bmp })
-        setStatus(
-          result.canceled
-            ? 'Export was canceled.'
-            : `BMP saved successfully: ${result.filePath ?? defaultName}. Keep only BMP files in /pic when copying to SD.`,
+      for (let index = 0; index < images.length; index += 1) {
+        const entry = images[index]
+        setStatus(`Rendering image ${index + 1}/${images.length}: ${entry.image.name}`)
+
+        const sourceImage = await getImageElement(entry.image.src)
+        const entryOutput = OUTPUT_SIZES[entry.orientation]
+        const cropped = await renderCroppedImage(
+          sourceImage,
+          entry.croppedAreaPixels,
+          entryOutput.width,
+          entryOutput.height,
+          undefined,
+          entry.rotationDeg,
         )
-      } else {
-        const browserResult = await saveBmpInBrowser(defaultName, bmp)
-        setStatus(
-          browserResult.canceled
-            ? 'Export was canceled.'
-            : browserResult.pathHint
-              ? `BMP saved successfully: ${browserResult.pathHint}. Keep only BMP files in /pic when copying to SD.`
-              : `BMP downloaded in browser: ${defaultName}. Keep only BMP files in /pic when copying to SD.`,
-        )
+        forceOpaqueWhite(cropped)
+        const dithered = applyPaletteWithDithering(cropped)
+        const bmp = imageDataToBmp(dithered)
+        encodedFiles.push({
+          fileName: buildWaveshareFileName(entry.image.name),
+          data: bmp,
+        })
       }
+
+      const uniqueFiles = uniquifyFileNames(encodedFiles)
+      const bridge = window.desktopBridge
+
+      if (bridge?.selectDirectory && bridge?.exportBatchBmp) {
+        const selected = await bridge.selectDirectory()
+        if (selected.canceled || !selected.folderPath) {
+          setStatus('Export was canceled.')
+          return
+        }
+
+        const result = await bridge.exportBatchBmp({
+          folderPath: selected.folderPath,
+          files: uniqueFiles,
+        })
+
+        if (result.canceled) {
+          setStatus('Export was canceled.')
+          return
+        }
+
+        const failures = result.failed ?? []
+        if (failures.length > 0) {
+          setStatus(
+            `Export finished with errors. Saved ${result.savedCount ?? 0}/${uniqueFiles.length} file(s).`,
+          )
+          return
+        }
+
+        setStatus(
+          `Exported ${result.savedCount ?? uniqueFiles.length} BMP file(s) to ${result.folderPath ?? selected.folderPath}.`,
+        )
+        return
+      }
+
+      for (const file of uniqueFiles) {
+        await saveBmpInBrowser(file.fileName, file.data)
+      }
+      setStatus(`Exported ${uniqueFiles.length} BMP file(s) via browser downloads.`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown problem during export.'
       setStatus(`Export failed: ${message}`)
@@ -302,21 +415,22 @@ function App() {
           <p className="eyebrow">The meshosk and AI presents</p>
           <h1>Waveshare PhotoPainter image tool</h1>
           <p className="lede">
-            Upload a photo, place the exact crop, switch orientation, and export a 24-bit BMP at
-            800 x 480 or 480 x 800.
+            Upload photos, tune crop per image, rotate by 90 degrees, and export 24-bit BMP files
+            for 800 x 480 or 480 x 800 panels.
           </p>
         </div>
 
         <section className="panel stack">
           <h2>Input</h2>
           <button className="primary" type="button" onClick={() => inputRef.current?.click()}>
-            Select image
+            Select images
           </button>
           <input
             ref={inputRef}
             hidden
             accept={ACCEPTED_FORMATS}
             type="file"
+            multiple
             onChange={handleFileSelection}
           />
           <p className="muted">Supported formats: JPG, PNG, WebP, BMP, GIF, HEIC.</p>
@@ -327,15 +441,17 @@ function App() {
           <div className="segmented">
             <button
               type="button"
-              className={orientation === 'landscape' ? 'active' : ''}
-              onClick={() => setOrientation('landscape')}
+              className={activeImage?.orientation === 'landscape' ? 'active' : ''}
+              disabled={!activeImage}
+              onClick={() => updateActiveImage((entry) => ({ ...entry, orientation: 'landscape' }))}
             >
               800 x 480
             </button>
             <button
               type="button"
-              className={orientation === 'portrait' ? 'active' : ''}
-              onClick={() => setOrientation('portrait')}
+              className={activeImage?.orientation === 'portrait' ? 'active' : ''}
+              disabled={!activeImage}
+              onClick={() => updateActiveImage((entry) => ({ ...entry, orientation: 'portrait' }))}
             >
               480 x 800
             </button>
@@ -343,7 +459,7 @@ function App() {
 
           <label className="control" htmlFor="zoom-range">
             <span>Zoom</span>
-            <strong>{zoom.toFixed(2)}x</strong>
+            <strong>{activeImage ? `${activeImage.zoom.toFixed(2)}x` : '0.00x'}</strong>
           </label>
           <input
             id="zoom-range"
@@ -351,26 +467,65 @@ function App() {
             max={MAX_ZOOM}
             step={0.01}
             type="range"
-            value={zoom}
-            onChange={(event) => setZoom(Math.max(effectiveMinZoom, Number(event.target.value)))}
+            value={activeImage?.zoom ?? effectiveMinZoom}
+            disabled={!activeImage}
+            onChange={(event) =>
+              updateActiveImage((entry) => ({
+                ...entry,
+                zoom: Math.max(effectiveMinZoom, Number(event.target.value)),
+              }))
+            }
           />
 
           <div className="zoom-row">
             <button
               type="button"
               className="secondary"
-              onClick={() => setZoom((current) => Math.max(effectiveMinZoom, current - 0.1))}
+              disabled={!activeImage}
+              onClick={() =>
+                updateActiveImage((entry) => ({
+                  ...entry,
+                  zoom: Math.max(effectiveMinZoom, entry.zoom - 0.1),
+                }))
+              }
             >
               Zoom out
             </button>
             <button
               type="button"
               className="secondary"
-              onClick={() => setZoom((current) => Math.min(MAX_ZOOM, current + 0.1))}
+              disabled={!activeImage}
+              onClick={() =>
+                updateActiveImage((entry) => ({
+                  ...entry,
+                  zoom: Math.min(MAX_ZOOM, entry.zoom + 0.1),
+                }))
+              }
             >
               Zoom in
             </button>
           </div>
+
+          <div className="zoom-row">
+            <button
+              type="button"
+              className="secondary"
+              disabled={!activeImage}
+              onClick={() => rotateActiveImage(-ROTATION_STEP)}
+            >
+              Rotate left 90
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={!activeImage}
+              onClick={() => rotateActiveImage(ROTATION_STEP)}
+            >
+              Rotate right 90
+            </button>
+          </div>
+
+          <p className="muted">Rotation: {activeImage ? `${activeImage.rotationDeg}deg` : '0deg'}</p>
 
           <label className="checkbox-control" htmlFor="constrain-crop">
             <input
@@ -382,10 +537,18 @@ function App() {
             <span>Constrain crop to image</span>
           </label>
 
-          <p className="muted">Place the crop directly on the source image with your mouse. Zoom changes image scale.</p>
+          <p className="muted">
+            Crop frame behavior and zoom controls are unchanged. Rotation applies to the image under
+            the crop frame.
+          </p>
 
-          <button className="primary" type="button" disabled={!image || isExporting} onClick={handleExport}>
-            {isExporting ? 'Exporting...' : 'Export BMP'}
+          <button
+            className="primary"
+            type="button"
+            disabled={images.length === 0 || isExporting}
+            onClick={handleExportAll}
+          >
+            {isExporting ? 'Exporting...' : `Export all (${images.length})`}
           </button>
           <p className="muted">{status}</p>
         </section>
@@ -394,15 +557,17 @@ function App() {
           <h2>Palette</h2>
           <p className="muted">{paletteLabels}</p>
           <p className="muted">Floyd-Steinberg dithering is used for better detail on e-paper.</p>
-          {image ? (
+          {activeImage ? (
             <dl className="meta">
               <div>
                 <dt>Source</dt>
-                <dd>{image.width} x {image.height}</dd>
+                <dd>
+                  {activeImage.image.width} x {activeImage.image.height}
+                </dd>
               </div>
               <div>
                 <dt>File</dt>
-                <dd>{image.name}</dd>
+                <dd>{activeImage.image.name}</dd>
               </div>
             </dl>
           ) : null}
@@ -410,20 +575,57 @@ function App() {
       </aside>
 
       <main className="workspace">
+        {images.length > 0 ? (
+          <section className="panel thumbs-panel">
+            <div className="thumb-strip" role="list" aria-label="Imported images">
+              {images.map((entry) => (
+                <article
+                  key={entry.id}
+                  className={`thumb-card ${entry.id === activeImageId ? 'active' : ''}`}
+                  onClick={() => setActiveImageId(entry.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setActiveImageId(entry.id)
+                    }
+                  }}
+                >
+                  <img src={entry.image.src} alt={entry.image.name} />
+                  <div className="thumb-meta">
+                    <span title={entry.image.name}>{entry.image.name}</span>
+                    <button
+                      type="button"
+                      className="thumb-remove"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        removeImage(entry.id)
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         <section
-          className={`dropzone ${image ? 'loaded' : ''}`}
+          className={`dropzone ${activeImage ? 'loaded' : ''}`}
           onDragEnter={(event) => event.preventDefault()}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
             void handleDrop(event)
           }}
         >
-          {image ? (
+          {activeImage ? (
             <div className="crop-shell" ref={cropShellRef}>
               <Cropper
-                image={image.src}
-                crop={crop}
-                zoom={zoom}
+                image={activeImage.image.src}
+                crop={activeImage.crop}
+                zoom={activeImage.zoom}
                 minZoom={effectiveMinZoom}
                 maxZoom={MAX_ZOOM}
                 aspect={aspect}
@@ -431,24 +633,45 @@ function App() {
                 showGrid={true}
                 objectFit="contain"
                 restrictPosition={constrainToImage}
-                onCropChange={setCrop}
-                onZoomChange={(value) => setZoom(Math.max(effectiveMinZoom, Math.min(MAX_ZOOM, value)))}
-                onCropComplete={(_area, pixels) => setCroppedAreaPixels(pixels)}
+                rotation={activeImage.rotationDeg}
+                onCropChange={(crop) =>
+                  updateActiveImage((entry) => ({
+                    ...entry,
+                    crop,
+                  }))
+                }
+                onZoomChange={(value) =>
+                  updateActiveImage((entry) => ({
+                    ...entry,
+                    zoom: Math.max(effectiveMinZoom, Math.min(MAX_ZOOM, value)),
+                  }))
+                }
+                onCropComplete={(_area, pixels) =>
+                  updateActiveImage((entry) => ({
+                    ...entry,
+                    croppedAreaPixels: pixels,
+                  }))
+                }
                 onMediaLoaded={(media) =>
-                  setMediaViewport({
-                    width: media.width,
-                    height: media.height,
-                    naturalWidth: media.naturalWidth ?? media.width,
-                    naturalHeight: media.naturalHeight ?? media.height,
-                  })
+                  updateActiveImage((entry) => ({
+                    ...entry,
+                    mediaViewport: {
+                      width: media.width,
+                      height: media.height,
+                      naturalWidth: media.naturalWidth ?? media.width,
+                      naturalHeight: media.naturalHeight ?? media.height,
+                    },
+                  }))
                 }
               />
-              <div className="frame-badge">Crop for {outputSize.width} x {outputSize.height}</div>
+              <div className="frame-badge">
+                Crop for {outputSize.width} x {outputSize.height}
+              </div>
             </div>
           ) : (
             <div className="dropzone-empty">
-              <p>Drag an image here</p>
-              <span>or use the Select image button</span>
+              <p>Drag one or more images here</p>
+              <span>or use the Select images button</span>
             </div>
           )}
         </section>
@@ -473,6 +696,57 @@ function App() {
   )
 }
 
+const createImageEntry = (image: LoadedImage): ImageEntry => {
+  const orientation: Orientation = 'landscape'
+  return {
+    id: createId(),
+    image,
+    crop: INITIAL_CROP,
+    zoom: 1,
+    croppedAreaPixels: createInitialArea(image, orientation),
+    orientation,
+    rotationDeg: 0,
+    mediaViewport: null,
+  }
+}
+
+const createInitialArea = (image: LoadedImage, orientation: Orientation): Area => {
+  const ratio = OUTPUT_SIZES[orientation].width / OUTPUT_SIZES[orientation].height
+  const imageRatio = image.width / image.height
+
+  if (imageRatio > ratio) {
+    const height = image.height
+    const width = Math.round(height * ratio)
+    return {
+      x: Math.round((image.width - width) / 2),
+      y: 0,
+      width,
+      height,
+    }
+  }
+
+  const width = image.width
+  const height = Math.round(width / ratio)
+  return {
+    x: 0,
+    y: Math.round((image.height - height) / 2),
+    width,
+    height,
+  }
+}
+
+const createId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.round(Math.random() * 1_000_000)}`
+}
+
+const normalizeRotation = (rotation: number) => {
+  const normalized = rotation % 360
+  return normalized < 0 ? normalized + 360 : normalized
+}
+
 const buildWaveshareFileName = (name: string) => {
   const base = stripExtension(extractBaseName(name)).trim()
   const sanitized = base
@@ -484,6 +758,32 @@ const buildWaveshareFileName = (name: string) => {
 
   const stem = sanitized || 'image'
   return `${stem}.bmp`
+}
+
+const uniquifyFileNames = (files: BatchExportFile[]): BatchExportFile[] => {
+  const usedNames = new Set<string>()
+  return files.map((file) => {
+    const uniqueName = createUniqueName(file.fileName, usedNames)
+    usedNames.add(uniqueName.toLowerCase())
+    return {
+      ...file,
+      fileName: uniqueName,
+    }
+  })
+}
+
+const createUniqueName = (requestedName: string, usedNames: Set<string>) => {
+  const baseName = stripExtension(requestedName)
+  const extension = requestedName.includes('.') ? requestedName.slice(requestedName.lastIndexOf('.')) : ''
+  let candidate = `${baseName}${extension}`
+  let index = 1
+
+  while (usedNames.has(candidate.toLowerCase())) {
+    candidate = `${baseName}_${index}${extension}`
+    index += 1
+  }
+
+  return candidate
 }
 
 const extractBaseName = (name: string) => name.split(/[\\/]/).pop() ?? name
@@ -504,13 +804,18 @@ const forceOpaqueWhite = (imageData: ImageData) => {
 }
 
 const saveBmpInBrowser = async (fileName: string, data: Uint8Array) => {
+  const byteView = new Uint8Array(data)
+
   const picker = (
     window as Window & {
       showSaveFilePicker?: (options: {
         suggestedName?: string
         types?: Array<{ description?: string; accept: Record<string, string[]> }>
       }) => Promise<{
-        createWritable: () => Promise<{ write: (input: BufferSource | Blob) => Promise<void>; close: () => Promise<void> }>
+        createWritable: () => Promise<{
+          write: (input: BufferSource | Blob) => Promise<void>
+          close: () => Promise<void>
+        }>
         name?: string
       }>
     }
@@ -518,39 +823,43 @@ const saveBmpInBrowser = async (fileName: string, data: Uint8Array) => {
 
   if (typeof picker === 'function') {
     try {
-      const handle = await picker({
+      const fileHandle = await picker({
         suggestedName: fileName,
-        types: [{ description: 'Bitmap image', accept: { 'image/bmp': ['.bmp'] } }],
+        types: [
+          {
+            description: 'Bitmap image',
+            accept: { 'image/bmp': ['.bmp'] },
+          },
+        ],
       })
-      const writable = await handle.createWritable()
-      const bytes = new Uint8Array(data.byteLength)
-      bytes.set(data)
-      await writable.write(bytes)
+
+      const writable = await fileHandle.createWritable()
+      await writable.write(byteView)
       await writable.close()
-      return { canceled: false, pathHint: handle.name ?? fileName }
+      return {
+        canceled: false,
+        pathHint: fileHandle.name,
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         return { canceled: true }
       }
+      throw error
     }
   }
 
-  downloadBmp(fileName, data)
-  return { canceled: false }
-}
+  const blob = new Blob([byteView], { type: 'image/bmp' })
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = fileName
+  anchor.click()
+  URL.revokeObjectURL(objectUrl)
 
-const downloadBmp = (fileName: string, data: Uint8Array) => {
-  const bytes = new Uint8Array(data.byteLength)
-  bytes.set(data)
-  const blob = new Blob([bytes], { type: 'image/bmp' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
+  return {
+    canceled: false,
+    pathHint: undefined,
+  }
 }
 
 export default App
