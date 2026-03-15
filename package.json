@@ -7,7 +7,8 @@
   "type": "module",
   "scripts": {
     "vite": "vite build && vite preview",
-    "build:mac": "vite build && electron-builder --mac dir --publish never",
+    "dist:ci": "vite build && electron-builder --publish never",
+    "build:mac": "vite build && electron-builder --mac dmg --publish never",
     "build:win": "vite build && electron-builder --win nsis --publish never",
     "build:deb": "vite build && electron-builder --linux deb --publish never"
   },
@@ -41,7 +42,7 @@
     ],
     "mac": {
       "target": [
-        "dir"
+        "dmg"
       ],
       "category": "public.app-category.graphics-design"
     },
@@ -52,7 +53,8 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ],
       "category": "Graphics"
     }
