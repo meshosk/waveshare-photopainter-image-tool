@@ -396,6 +396,37 @@ function App() {
         return
       }
 
+      const dirPicker = (
+        window as Window & {
+          showDirectoryPicker?: (options?: { mode?: string }) => Promise<FileSystemDirectoryHandle>
+        }
+      ).showDirectoryPicker
+
+      if (typeof dirPicker === 'function') {
+        let dirHandle: FileSystemDirectoryHandle
+        try {
+          dirHandle = await dirPicker({ mode: 'readwrite' })
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            setStatus('Export was canceled.')
+            return
+          }
+          throw error
+        }
+
+        for (let index = 0; index < uniqueFiles.length; index += 1) {
+          const file = uniqueFiles[index]
+          setStatus(`Saving ${index + 1}/${uniqueFiles.length}: ${file.fileName}`)
+          const fileHandle = await dirHandle.getFileHandle(file.fileName, { create: true })
+          const writable = await fileHandle.createWritable()
+          await writable.write(new Blob([file.data.buffer as ArrayBuffer], { type: 'image/bmp' }))
+          await writable.close()
+        }
+
+        setStatus(`Exported ${uniqueFiles.length} BMP file(s).`)
+        return
+      }
+
       for (const file of uniqueFiles) {
         await saveBmpInBrowser(file.fileName, file.data)
       }
