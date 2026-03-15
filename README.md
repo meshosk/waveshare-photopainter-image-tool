@@ -1,10 +1,6 @@
-# !!! DISCLAIMER !!!
-
-Keep in mind, that I'm lazy... very lazy... so this whole app is prompted... Yes, shame on me... It works... somehow...
-
 # PhotoPainter Converter
 
-Desktop app in electron??? for preparing images for Waveshare PhotoPainter without any local server.
+Browser preview workflow for preparing images for Waveshare PhotoPainter without installing Node.js on the host.
 
 ## Features
 
@@ -14,35 +10,19 @@ Desktop app in electron??? for preparing images for Waveshare PhotoPainter witho
 - Floyd-Steinberg dithering to a 7-color e-paper palette
 - Exports uncompressed 24-bit BMP
 
-## Ovladanie
+## Usage
 
-1. Klikni na Vybrat obrazok a nahraj vstupnu fotku.
-2. Vyber orientaciu vystupu:
-	- 800 x 480 (landscape)
-	- 480 x 800 (portrait)
-3. Umiestni vyrez priamo mysou na zdrojovom obrazku.
-4. Pouzi zoom slider alebo tlacidla Oddialit a Priblizit.
-5. Preview panel zobrazuje realny vysledok vyrezu.
-6. Ak cast vyrezu siaha mimo zdrojovy obrazok, tato cast je biela.
-7. Klikni na Export BMP a uloz vystupny subor.
+1. Click Select Image and load a source photo.
+2. Choose the output orientation:
+   - 800 x 480 landscape
+   - 480 x 800 portrait
+3. Position the crop directly on the source image.
+4. Adjust the zoom with the slider or buttons.
+5. Check the preview panel for the final crop result.
+6. Areas outside the source image are filled with white.
+7. Click Export BMP and save the output file.
 
-## Spustenie cez Vite
-
-### Vite dev (live reload)
-
-1. docker compose up dev
-2. otvor http://localhost:5173
-
-### Vite preview (produkcny build)
-
-1. docker compose up preview
-2. otvor http://localhost:4173
-
-### Zastavenie sluzieb
-
-1. docker compose down
-
-## Docker workflow
+## Docker Preview
 
 This workspace assumes you do not install Node.js on the host.
 
@@ -52,13 +32,7 @@ Install dependencies:
 docker compose run --rm node npm install
 ```
 
-Run typecheck and renderer build:
-
-```bash
-docker compose run --rm node npm run build
-```
-
-Run the app UI without local Node installation (Docker-only):
+Run the preview service:
 
 ```bash
 docker compose up preview
@@ -66,19 +40,56 @@ docker compose up preview
 
 Then open `http://localhost:4173` in your browser.
 
-Stop it with:
+You can also run the same flow directly in the node container:
+
+```bash
+docker compose run --rm node npm run vite -- --host 0.0.0.0 --port 4173
+```
+
+Stop the preview service with:
 
 ```bash
 docker compose down
 ```
 
-Note about Electron GUI in Docker on macOS:
+The only npm script currently exposed by the project is:
 
-- Native Electron window rendering from Linux containers is not practical on macOS without extra GUI forwarding setup.
-- For day-to-day development without local installs, use the Docker preview service above.
-- For final standalone desktop installers, build per platform in CI (macOS runner for DMG, Windows runner for EXE, Linux runner for AppImage).
+```bash
+npm run vite
+```
 
-If you later want to package the Electron app, use a host build for the target platform. Electron packaging for macOS cannot be produced from a generic Linux container.
+It performs a production renderer build and then starts `vite preview`.
+
+## Packaging
+
+The project also exposes platform packaging commands for Electron:
+
+```bash
+npm run build:mac
+npm run build:win
+npm run build:deb
+```
+
+These commands build the renderer into `dist` and then run `electron-builder` for the selected platform.
+
+- `npm run build:mac` builds an unsigned macOS app bundle directory (no ZIP)
+- `npm run build:win` builds a Windows NSIS installer
+- `npm run build:deb` builds a Debian package for Debian or Ubuntu based systems
+
+Use these commands on an appropriate host environment for the target platform. The Docker preview container is intended only for the browser preview workflow, not for final desktop packaging.
+
+## Packaging With Docker
+
+If you do not want to install Node.js on the host, use Docker for the supported packaging targets:
+
+```bash
+docker compose run --rm build-deb
+docker compose run --rm build-win
+```
+
+These services install dependencies inside the container and then run the matching npm packaging script.
+
+macOS packaging is the exception. A generic Linux Docker container cannot produce a proper macOS Electron build. Keep `npm run build:mac` for a real macOS Node environment or a macOS CI runner.
 
 ## Export pipeline
 

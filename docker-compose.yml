@@ -7,19 +7,6 @@ services:
     environment:
       - npm_config_cache=/tmp/npm-cache
 
-  dev:
-    image: node:22-bookworm
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-    environment:
-      - npm_config_cache=/tmp/npm-cache
-      - CHOKIDAR_USEPOLLING=true
-      - WATCHPACK_POLLING=true
-    command: sh -lc "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
-    ports:
-      - "5173:5173"
-
   preview:
     image: node:22-bookworm
     working_dir: /workspace
@@ -27,6 +14,36 @@ services:
       - .:/workspace
     environment:
       - npm_config_cache=/tmp/npm-cache
-    command: sh -lc "npm install && npm run build:renderer && npm run preview -- --host 0.0.0.0 --port 4173"
+    command: sh -lc "npm install && npm run vite -- --host 0.0.0.0 --port 4173"
     ports:
       - "4173:4173"
+
+  build-deb:
+    image: electronuserland/builder:20
+    working_dir: /project
+    volumes:
+      - .:/project
+      - electron-cache:/root/.cache/electron
+      - electron-builder-cache:/root/.cache/electron-builder
+    environment:
+      - ELECTRON_CACHE=/root/.cache/electron
+      - ELECTRON_BUILDER_CACHE=/root/.cache/electron-builder
+      - npm_config_cache=/tmp/npm-cache
+    command: sh -lc "npm install && npm run build:deb"
+
+  build-win:
+    image: electronuserland/builder:wine
+    working_dir: /project
+    volumes:
+      - .:/project
+      - electron-cache:/root/.cache/electron
+      - electron-builder-cache:/root/.cache/electron-builder
+    environment:
+      - ELECTRON_CACHE=/root/.cache/electron
+      - ELECTRON_BUILDER_CACHE=/root/.cache/electron-builder
+      - npm_config_cache=/tmp/npm-cache
+    command: sh -lc "npm install && npm run build:win"
+
+volumes:
+  electron-cache:
+  electron-builder-cache:

@@ -421,15 +421,19 @@ function App() {
 }
 
 const buildWaveshareFileName = (name: string) => {
-  const base = stripExtension(name)
+  const base = stripExtension(extractBaseName(name)).trim()
   const sanitized = base
     .normalize('NFKD')
-    .replace(/[^A-Za-z0-9]/g, '')
-    .toUpperCase()
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 
-  const stem = sanitized.slice(0, 8) || `PIC${Date.now().toString().slice(-5).padStart(5, '0')}`
-  return `${stem}.BMP`
+  const stem = sanitized || 'image'
+  return `${stem}.bmp`
 }
+
+const extractBaseName = (name: string) => name.split(/[\\/]/).pop() ?? name
 
 const stripExtension = (name: string) => name.replace(/\.[^.]+$/, '')
 
