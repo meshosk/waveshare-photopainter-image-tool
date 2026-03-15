@@ -9,7 +9,7 @@
     "vite": "vite build && vite preview",
     "vite:ugly": "vite build --watch || vite preview",
     "dist:ci": "vite build && electron-builder --publish never",
-    "build:mac": "vite build && electron-builder --mac dmg --publish never",
+    "build:mac": "vite build && electron-builder --mac dir --publish never",
     "build:win": "vite build && electron-builder --win nsis --publish never",
     "build:deb": "vite build && electron-builder --linux deb --publish never"
   },
@@ -43,7 +43,7 @@
     ],
     "mac": {
       "target": [
-        "dmg"
+        "dir"
       ],
       "category": "public.app-category.graphics-design"
     },
