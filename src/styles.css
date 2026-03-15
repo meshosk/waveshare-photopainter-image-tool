@@ -173,6 +173,22 @@ dd {
   justify-content: space-between;
 }
 
+.checkbox-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-control input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: #cb613f;
+}
+
 .zoom-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

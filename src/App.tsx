@@ -12,6 +12,22 @@ const INITIAL_AREA: Area = { x: 0, y: 0, width: 800, height: 480 }
 const MIN_ZOOM = 0.4
 const MAX_ZOOM = 5
 
+function clampCrop(
+  crop: { x: number; y: number },
+  cropSize: { width: number; height: number },
+  mediaViewport: { width: number; height: number },
+  zoom: number,
+): { x: number; y: number } {
+  const renderedWidth = mediaViewport.width * zoom
+  const renderedHeight = mediaViewport.height * zoom
+  const maxX = Math.max(0, (renderedWidth - cropSize.width) / 2)
+  const maxY = Math.max(0, (renderedHeight - cropSize.height) / 2)
+  return {
+    x: Math.max(-maxX, Math.min(maxX, crop.x)),
+    y: Math.max(-maxY, Math.min(maxY, crop.y)),
+  }
+}
+
 function App() {
   const [image, setImage] = useState<LoadedImage | null>(null)
   const [crop, setCrop] = useState(INITIAL_CROP)
@@ -25,6 +41,7 @@ function App() {
   } | null>(null)
   const [orientation, setOrientation] = useState<Orientation>('landscape')
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area>(INITIAL_AREA)
+  const [constrainToImage, setConstrainToImage] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [status, setStatus] = useState('Upload an image and place the crop for PhotoPainter.')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -33,6 +50,16 @@ function App() {
 
   const outputSize = OUTPUT_SIZES[orientation]
   const aspect = outputSize.width / outputSize.height
+
+  const minZoomToFit =
+    cropSize && mediaViewport
+      ? Math.max(
+          cropSize.width / mediaViewport.width,
+          cropSize.height / mediaViewport.height,
+        )
+      : MIN_ZOOM
+
+  const effectiveMinZoom = constrainToImage ? Math.max(MIN_ZOOM, minZoomToFit) : MIN_ZOOM
 
   useEffect(() => {
     const element = cropShellRef.current
@@ -153,6 +180,21 @@ function App() {
       window.clearTimeout(timeout)
     }
   }, [crop, cropSize, croppedAreaPixels, image, mediaViewport, outputSize.height, outputSize.width, zoom])
+
+  useEffect(() => {
+    if (constrainToImage && cropSize && mediaViewport) {
+      const minZoom = Math.max(MIN_ZOOM, Math.max(
+        cropSize.width / mediaViewport.width,
+        cropSize.height / mediaViewport.height,
+      ))
+      setZoom((prev) => {
+        const snapped = Math.max(prev, minZoom)
+        setCrop((prevCrop) => clampCrop(prevCrop, cropSize, mediaViewport, snapped))
+        return snapped
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [constrainToImage])
 
   const paletteLabels = useMemo(
     () => PHOTO_PAINTER_PALETTE.map((entry) => entry.name).join(', '),
@@ -305,19 +347,19 @@ function App() {
           </label>
           <input
             id="zoom-range"
-            min={MIN_ZOOM}
+            min={effectiveMinZoom}
             max={MAX_ZOOM}
             step={0.01}
             type="range"
             value={zoom}
-            onChange={(event) => setZoom(Number(event.target.value))}
+            onChange={(event) => setZoom(Math.max(effectiveMinZoom, Number(event.target.value)))}
           />
 
           <div className="zoom-row">
             <button
               type="button"
               className="secondary"
-              onClick={() => setZoom((current) => Math.max(MIN_ZOOM, current - 0.1))}
+              onClick={() => setZoom((current) => Math.max(effectiveMinZoom, current - 0.1))}
             >
               Zoom out
             </button>
@@ -329,6 +371,17 @@ function App() {
               Zoom in
             </button>
           </div>
+
+          <label className="checkbox-control" htmlFor="constrain-crop">
+            <input
+              id="constrain-crop"
+              type="checkbox"
+              checked={constrainToImage}
+              onChange={(e) => setConstrainToImage(e.target.checked)}
+            />
+            <span>Constrain crop to image</span>
+          </label>
+
           <p className="muted">Place the crop directly on the source image with your mouse. Zoom changes image scale.</p>
 
           <button className="primary" type="button" disabled={!image || isExporting} onClick={handleExport}>
@@ -371,15 +424,15 @@ function App() {
                 image={image.src}
                 crop={crop}
                 zoom={zoom}
-                minZoom={MIN_ZOOM}
+                minZoom={effectiveMinZoom}
                 maxZoom={MAX_ZOOM}
                 aspect={aspect}
                 cropSize={cropSize}
                 showGrid={true}
                 objectFit="contain"
-                restrictPosition={false}
+                restrictPosition={constrainToImage}
                 onCropChange={setCrop}
-                onZoomChange={(value) => setZoom(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value)))}
+                onZoomChange={(value) => setZoom(Math.max(effectiveMinZoom, Math.min(MAX_ZOOM, value)))}
                 onCropComplete={(_area, pixels) => setCroppedAreaPixels(pixels)}
                 onMediaLoaded={(media) =>
                   setMediaViewport({
