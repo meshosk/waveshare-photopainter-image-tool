@@ -1,46 +1,136 @@
 # PhotoPainter Converter
 
-Browser preview workflow for preparing images for Waveshare PhotoPainter without installing Node.js on the host.
+Desktop and browser tool for preparing images for Waveshare PhotoPainter panels.
 
-## Features
+The current UI is titled `Waveshare PhotoPainter image tool` and is built around a multi-image workflow: import several source files, tune crop per image, preview the final dithered result, then export all BMP files in one run.
 
-- Imports JPG, PNG, WebP, BMP, GIF, and HEIC
-- Interactive crop with fixed PhotoPainter aspect ratio
-- Landscape `800 x 480` and portrait `480 x 800`
-- Floyd-Steinberg dithering to a 7-color e-paper palette
-- Exports uncompressed 24-bit BMP
+## What The App Does
 
-## Usage
+- Imports one or more source images at once
+- Supports drag and drop directly into the workspace
+- Accepts JPG, JPEG, PNG, WebP, BMP, GIF, HEIC, and HEIF
+- Converts unsupported HEIC and HEIF files to PNG during import when needed
+- Detects duplicate source images by content hash and skips them
+- Lets you switch each image between `800 x 480` landscape and `480 x 800` portrait
+- Provides crop, zoom, and 90 degree rotation per image
+- Optionally constrains the crop frame so it always stays inside the source image
+- Shows a live preview of the final dithered output
+- Reduces the image to the 7-color PhotoPainter palette with Floyd-Steinberg dithering
+- Exports 24-bit BMP files with sanitized unique file names
+- Saves and reloads full working sessions as `.photopaint` project files
 
-1. Click Select Image and load a source photo.
-2. Choose the output orientation:
-   - 800 x 480 landscape
-   - 480 x 800 portrait
-3. Position the crop directly on the source image.
-4. Adjust the zoom with the slider or buttons.
-5. Check the preview panel for the final crop result.
-6. Areas outside the source image are filled with white.
-7. Click Export BMP and save the output file.
+## Current UI
 
-## Docker Preview
+The interface is split into three main areas.
 
-This workspace assumes you do not install Node.js on the host.
+### Sidebar
 
-Install dependencies:
+The left sidebar contains:
+
+- `Select images`
+- `Export project (.photopaint)`
+- `Import project (.photopaint)`
+- Orientation switch for the active image
+- Zoom slider plus zoom in and zoom out buttons
+- `Rotate left 90` and `Rotate right 90`
+- `Constrain crop to image`
+- `Export all (N)` batch export action
+- Status text for import, project operations, and export progress
+- Palette and source image metadata for the active image
+
+### Thumbnail Strip
+
+When images are loaded, the app shows a horizontal strip of thumbnails.
+
+- Click a thumbnail to make it active
+- Each card includes the source file name
+- Each card has a `Remove` button
+- Crop, orientation, zoom, rotation, and constrain settings are tracked separately per image
+
+### Crop And Preview Area
+
+- The center panel is the crop workspace powered by `react-easy-crop`
+- You can also drag files directly onto this area to import them
+- The crop frame automatically matches the selected PhotoPainter aspect ratio
+- The lower preview panel shows the processed result after crop, rotation, white background fill, palette reduction, and dithering
+
+## Typical Workflow
+
+1. Click `Select images` or drag files into the app.
+2. Pick the active image from the thumbnail strip.
+3. Choose `800 x 480` or `480 x 800` for that image.
+4. Move the crop, change zoom, and rotate in 90 degree steps as needed.
+5. Enable `Constrain crop to image` if you want to prevent empty margins around the frame.
+6. Check the preview panel.
+7. Repeat for the remaining thumbnails.
+8. Click `Export all` to generate BMP files for all loaded images.
+
+## Project Files
+
+The app can store and reload the full working state as a `.photopaint` file.
+
+Project export includes:
+
+- Embedded image data
+- Crop position
+- Zoom value
+- Cropped area in pixels
+- Orientation
+- Rotation in degrees
+- `Constrain crop to image` state
+- Export timestamp
+
+Project import validates the payload structure and then:
+
+- restores image entries and their settings
+- skips duplicate images already present in the session
+- skips missing or invalid image records
+- reports decode failures in the status text
+
+In the Electron desktop app, project export uses native save dialogs. In browser preview mode, the project is downloaded as a file.
+
+## Export Behavior
+
+Every export goes through this pipeline:
+
+1. Crop the selected source region.
+2. Apply the selected 90 degree rotation.
+3. Resize to `800 x 480` or `480 x 800`.
+4. Replace transparent pixels with opaque white.
+5. Map colors to the PhotoPainter palette.
+6. Apply Floyd-Steinberg dithering.
+7. Encode the result as an uncompressed 24-bit BMP.
+
+Export naming rules:
+
+- source file names are sanitized for Windows-safe BMP output
+- duplicate output names are automatically uniquified with `_1`, `_2`, and so on
+
+In the Electron desktop app, batch export writes all files into a selected folder. In browser mode, the app uses the File System Access API when available and falls back to regular downloads otherwise.
+
+## Development Preview
+
+This repository supports browser preview without installing Node.js on the host.
+
+Install dependencies in the container:
 
 ```bash
 docker compose run --rm node npm install
 ```
 
-Run the preview service:
+Run the preview server:
 
 ```bash
 docker compose up preview
 ```
 
-Then open `http://localhost:4173` in your browser.
+Then open:
 
-You can also run the same flow directly in the node container:
+```text
+http://localhost:4173
+```
+
+You can also run the same preview flow directly:
 
 ```bash
 docker compose run --rm node npm run vite -- --host 0.0.0.0 --port 4173
@@ -52,51 +142,51 @@ Stop the preview service with:
 docker compose down
 ```
 
-The only npm script currently exposed by the project is:
+## Desktop Packaging
 
-```bash
-npm run vite
-```
+The desktop app uses Electron and Electron Builder.
 
-It performs a production renderer build and then starts `vite preview`.
-
-## Packaging
-
-The project also exposes platform packaging commands for Electron:
+Available packaging commands:
 
 ```bash
 npm run build:mac
 npm run build:win
 ```
 
-These commands build the renderer into `dist` and then run `electron-builder` for the selected platform.
+- `npm run build:mac` builds an unsigned macOS app bundle directory
+- `npm run build:win` builds a portable Windows `.exe`, not an installer
 
-- `npm run build:mac` builds an unsigned macOS app bundle directory (no ZIP)
-- `npm run build:win` builds a portable Windows `.exe` that starts the app directly without an installer
+These commands require a matching host environment with Node.js installed.
 
-Use these commands on an appropriate host environment for the target platform. The Docker preview container is intended only for the browser preview workflow, not for final desktop packaging.
+### Windows Packaging With Docker
 
-If you are on Apple Silicon and do not want to pull the large Wine-based Docker image, the repository already includes a GitHub Actions workflow in [.github/workflows/build-desktop.yml](.github/workflows/build-desktop.yml). Run it manually with the `windows` target and download the produced `.exe` artifact from GitHub.
-
-## Packaging With Docker
-
-If you do not want to install Node.js on the host, use Docker for the supported Windows packaging target:
+If you do not want Node.js on the host, the repository includes a Docker path for Windows packaging:
 
 ```bash
 docker compose run --rm build-win
 ```
 
-This service installs dependencies inside the container and then runs the matching npm packaging script.
+Notes:
 
-On Apple Silicon Macs, the service is pinned to `linux/amd64`. Windows packaging relies on `wine`, and the `electronuserland/builder:wine` workflow is reliable in the x64 container variant. A Windows icon can make that dependency visible because Electron Builder needs Windows resource-editing tools when stamping the executable.
+- this uses the large `electronuserland/builder:wine` image
+- on Apple Silicon, the service is pinned to `linux/amd64`
+- Windows packaging needs Wine-backed resource tooling when stamping the executable icon
 
-macOS packaging is the exception. A generic Linux Docker container cannot produce a proper macOS Electron build. Keep `npm run build:mac` for a real macOS Node environment or a macOS CI runner.
+### macOS Packaging
 
-## Export pipeline
+macOS packaging should be done on a real macOS host or macOS CI runner.
 
-1. Load an image.
-2. Position and zoom the crop frame.
-3. Resize the selected area to `800 x 480` or `480 x 800`.
-4. Reduce colors to the 7-color PhotoPainter palette.
-5. Apply Floyd-Steinberg dithering.
-6. Save the final image as 24-bit BMP.
+A generic Linux Docker container is not a valid replacement for a proper macOS Electron build.
+
+## GitHub Actions Release Flow
+
+The repository includes a release workflow in [.github/workflows/build-desktop.yml](.github/workflows/build-desktop.yml).
+
+It can:
+
+- run manually with `windows`, `macos`, or `all`
+- build a macOS ZIP containing the `.app`
+- build a Windows portable `.exe`
+- publish both assets to a GitHub Release when a tag matching `v*` is pushed
+
+This is the recommended Windows build path if you are on Apple Silicon and do not want to pull the large local Wine image.
