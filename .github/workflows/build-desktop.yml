@@ -23,23 +23,10 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build:
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'all' || (github.event.inputs.target == 'windows' && matrix.os == 'windows-latest') || (github.event.inputs.target == 'macos' && matrix.os == 'macos-latest')
-    name: Build ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            name: macOS
-            build_script: build:mac
-            artifact_name: PhotoPainter-Converter-macOS
-          - os: windows-latest
-            name: Windows
-            build_script: build:win
-            artifact_name: PhotoPainter-Converter-Windows
-
+  build-macos:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'all' || github.event.inputs.target == 'macos'
+    name: Build macOS
+    runs-on: macos-latest
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
       ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: "true"
@@ -58,10 +45,9 @@ jobs:
         run: npm ci
 
       - name: Build and package
-        run: npm run ${{ matrix.build_script }}
+        run: npm run build:mac
 
       - name: Package macOS app bundle
-        if: matrix.os == 'macos-latest'
         run: |
           APP_PATH=$(find release -maxdepth 3 -type d -name "PhotoPainter Converter.app" | head -n 1)
           if [ -z "$APP_PATH" ]; then
@@ -71,25 +57,49 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release/PhotoPainter-Converter-macOS.zip"
 
       - name: Upload macOS release artifact
-        if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: PhotoPainter-Converter-macOS
           path: release/PhotoPainter-Converter-macOS.zip
           if-no-files-found: error
 
+  build-windows:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'all' || github.event.inputs.target == 'windows'
+    name: Build Windows
+    runs-on: windows-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and package
+        run: npm run build:win
+
       - name: Upload Windows release artifact
-        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: PhotoPainter-Converter-Windows
           path: release/**/*.exe
           if-no-files-found: error
 
   publish-release:
     name: Create GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs:
+      - build-macos
+      - build-windows
     runs-on: ubuntu-latest
     permissions:
       contents: write
