@@ -18,19 +18,6 @@ services:
     ports:
       - "4173:4173"
 
-  build-deb:
-    image: electronuserland/builder:20
-    working_dir: /project
-    volumes:
-      - .:/project
-      - electron-cache:/root/.cache/electron
-      - electron-builder-cache:/root/.cache/electron-builder
-    environment:
-      - ELECTRON_CACHE=/root/.cache/electron
-      - ELECTRON_BUILDER_CACHE=/root/.cache/electron-builder
-      - npm_config_cache=/tmp/npm-cache
-    command: sh -lc "npm install && npm run build:deb"
-
   build-win:
     image: electronuserland/builder:wine
     working_dir: /project

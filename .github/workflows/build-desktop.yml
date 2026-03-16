@@ -1,4 +1,4 @@
-name: Build Desktop Installers
+name: Build Desktop Releases
 
 on:
   workflow_dispatch:
@@ -14,12 +14,20 @@ env:
 
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
+    name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: macos-latest
+            name: macOS
+            build_script: build:mac
+            artifact_name: PhotoPainter-Converter-macOS
+          - os: windows-latest
+            name: Windows
+            build_script: build:win
+            artifact_name: PhotoPainter-Converter-Windows
 
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -39,19 +47,33 @@ jobs:
         run: npm ci
 
       - name: Build and package
-        run: npm run dist:ci
+        run: npm run ${{ matrix.build_script }}
 
-      - name: Upload release artifacts
+      - name: Package macOS app bundle
+        if: matrix.os == 'macos-latest'
+        run: |
+          APP_PATH=$(find release -maxdepth 3 -type d -name "PhotoPainter Converter.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "macOS app bundle not found in release/"
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release/PhotoPainter-Converter-macOS.zip"
+
+      - name: Upload macOS release artifact
+        if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.os }}
-          path: |
-            release/**/*.dmg
-            release/**/*.exe
-            release/**/*.AppImage
-            release/**/*.deb
-            release/**/*.rpm
-          if-no-files-found: warn
+          name: ${{ matrix.artifact_name }}
+          path: release/PhotoPainter-Converter-macOS.zip
+          if-no-files-found: error
+
+      - name: Upload Windows release artifact
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release/**/*.exe
+          if-no-files-found: error
 
   publish-release:
     name: Create GitHub Release
@@ -70,5 +92,7 @@ jobs:
       - name: Create release and attach artifacts
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.exe
           generate_release_notes: true

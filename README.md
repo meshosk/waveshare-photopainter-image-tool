@@ -67,27 +67,24 @@ The project also exposes platform packaging commands for Electron:
 ```bash
 npm run build:mac
 npm run build:win
-npm run build:deb
 ```
 
 These commands build the renderer into `dist` and then run `electron-builder` for the selected platform.
 
 - `npm run build:mac` builds an unsigned macOS app bundle directory (no ZIP)
-- `npm run build:win` builds a Windows NSIS installer
-- `npm run build:deb` builds a Debian package for Debian or Ubuntu based systems
+- `npm run build:win` builds a portable Windows `.exe` that starts the app directly without an installer
 
 Use these commands on an appropriate host environment for the target platform. The Docker preview container is intended only for the browser preview workflow, not for final desktop packaging.
 
 ## Packaging With Docker
 
-If you do not want to install Node.js on the host, use Docker for the supported packaging targets:
+If you do not want to install Node.js on the host, use Docker for the supported Windows packaging target:
 
 ```bash
-docker compose run --rm build-deb
 docker compose run --rm build-win
 ```
 
-These services install dependencies inside the container and then run the matching npm packaging script.
+This service installs dependencies inside the container and then runs the matching npm packaging script.
 
 macOS packaging is the exception. A generic Linux Docker container cannot produce a proper macOS Electron build. Keep `npm run build:mac` for a real macOS Node environment or a macOS CI runner.
 
