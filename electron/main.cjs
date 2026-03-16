@@ -243,6 +243,59 @@ ipcMain.handle('dialog:export-batch-bmp', async (_event, payload) => {
   }
 })
 
+ipcMain.handle('dialog:save-project', async (_event, payload) => {
+  const defaultName =
+    typeof payload?.defaultName === 'string' && payload.defaultName.trim()
+      ? payload.defaultName
+      : 'project.photopaint'
+
+  const result = await dialog.showSaveDialog({
+    title: 'Save PhotoPainter project',
+    defaultPath: defaultName,
+    filters: [
+      { name: 'PhotoPainter project', extensions: ['photopaint'] },
+      { name: 'JSON', extensions: ['json'] },
+    ],
+  })
+
+  if (result.canceled || !result.filePath) {
+    return { canceled: true }
+  }
+
+  const serialized = JSON.stringify(payload?.project ?? {}, null, 2)
+  await fs.writeFile(result.filePath, serialized, 'utf8')
+  return { canceled: false, filePath: result.filePath }
+})
+
+ipcMain.handle('dialog:load-project', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Open PhotoPainter project',
+    properties: ['openFile'],
+    filters: [
+      { name: 'PhotoPainter project', extensions: ['photopaint', 'json'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true }
+  }
+
+  const filePath = result.filePaths[0]
+
+  try {
+    const text = await fs.readFile(filePath, 'utf8')
+    const project = JSON.parse(text)
+    return { canceled: false, filePath, project }
+  } catch (error) {
+    return {
+      canceled: false,
+      filePath,
+      error: error instanceof Error ? error.message : 'Unable to parse project file',
+    }
+  }
+})
+
 app.whenReady().then(async () => {
   appendRuntimeLog('app.whenReady', {
     userDataPath: app.getPath('userData'),

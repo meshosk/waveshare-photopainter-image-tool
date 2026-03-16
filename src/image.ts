@@ -1,9 +1,11 @@
 export type LoadedImage = {
   src: string
+  blob: Blob
   name: string
   width: number
   height: number
   mimeType: string
+  hash: string
 }
 
 export const loadImageFile = async (file: File): Promise<LoadedImage> => {
@@ -25,15 +27,19 @@ export const loadImageFile = async (file: File): Promise<LoadedImage> => {
     }
   }
 
+  const hash = await fingerprintBlob(blob)
+
   const src = URL.createObjectURL(blob)
   const dimensions = await getDimensions(src)
 
   return {
     src,
+    blob,
     name: normalizedName.replace(/\.(heic|heif)$/i, '.png'),
     width: dimensions.width,
     height: dimensions.height,
     mimeType,
+    hash,
   }
 }
 
@@ -128,3 +134,25 @@ const guessMimeType = (extension?: string) => {
       return 'application/octet-stream'
   }
 }
+
+const fingerprintBlob = async (blob: Blob) => {
+  const data = new Uint8Array(await blob.arrayBuffer())
+
+  if (typeof crypto !== 'undefined' && crypto.subtle?.digest) {
+    const digest = await crypto.subtle.digest('SHA-256', data)
+    return toHex(new Uint8Array(digest))
+  }
+
+  // Fallback for older runtimes where SubtleCrypto may be unavailable.
+  let hash = 0x811c9dc5
+  for (let index = 0; index < data.length; index += 1) {
+    hash ^= data[index]
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}-${data.length}`
+}
+
+const toHex = (value: Uint8Array) =>
+  Array.from(value)
+    .map((part) => part.toString(16).padStart(2, '0'))
+    .join('')

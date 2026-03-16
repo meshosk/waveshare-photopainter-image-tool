@@ -6,6 +6,7 @@ import { OUTPUT_SIZES, type Orientation, renderCroppedImage } from './crop'
 import { getImageElement, loadImageFile, releaseImage, type LoadedImage } from './image'
 
 const ACCEPTED_FORMATS = '.jpg,.jpeg,.png,.webp,.bmp,.gif,.heic,.heif'
+const PROJECT_FILE_FORMATS = '.photopaint,.json'
 
 const INITIAL_CROP = { x: 0, y: 0 }
 const MIN_ZOOM = 0.4
@@ -34,6 +35,15 @@ type BatchExportFile = {
   data: Uint8Array
 }
 
+type ProjectEntrySettings = {
+  crop: { x: number; y: number }
+  zoom: number
+  croppedAreaPixels: Area
+  orientation: Orientation
+  rotationDeg: number
+  constrainToImage: boolean
+}
+
 function clampCrop(
   crop: { x: number; y: number },
   cropSize: { width: number; height: number },
@@ -50,14 +60,30 @@ function clampCrop(
   }
 }
 
+function isMissingIpcHandlerError(error: unknown, channel: string) {
+  return error instanceof Error && error.message.includes(`No handler registered for '${channel}'`)
+}
+
+function downloadTextFile(fileName: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
 function App() {
   const [images, setImages] = useState<ImageEntry[]>([])
   const [activeImageId, setActiveImageId] = useState<string | null>(null)
   const [cropSize, setCropSize] = useState<{ width: number; height: number } | undefined>(undefined)
   const [isExporting, setIsExporting] = useState(false)
+  const [isProjectBusy, setIsProjectBusy] = useState(false)
   const [status, setStatus] = useState('Upload one or more images, set crop for each, and export BMP files.')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const projectInputRef = useRef<HTMLInputElement | null>(null)
   const cropShellRef = useRef<HTMLDivElement | null>(null)
   const imagesRef = useRef<ImageEntry[]>([])
 
@@ -267,12 +293,23 @@ function App() {
   const importImages = async (files: File[]) => {
     const loadedEntries: ImageEntry[] = []
     const failures: string[] = []
+    let duplicates = 0
+    const knownHashes = new Set(imagesRef.current.map((entry) => entry.image.hash))
 
     for (const file of files) {
       try {
         const loaded = await loadImageFile(file)
+
+        if (knownHashes.has(loaded.hash)) {
+          duplicates += 1
+          releaseImage(loaded.src)
+          continue
+        }
+
+        knownHashes.add(loaded.hash)
         loadedEntries.push(createImageEntry(loaded))
       } catch (error) {
+        console.error('[import-images]', error)
         failures.push(error instanceof Error ? error.message : 'Unknown problem while loading file.')
       }
     }
@@ -282,17 +319,251 @@ function App() {
       setActiveImageId((current) => current ?? loadedEntries[0].id)
     }
 
-    if (loadedEntries.length > 0 && failures.length === 0) {
+    if (loadedEntries.length > 0 && failures.length === 0 && duplicates === 0) {
       setStatus(`Loaded ${loadedEntries.length} image(s). Select thumbnail and adjust crop before export.`)
       return
     }
 
     if (loadedEntries.length > 0) {
-      setStatus(`Loaded ${loadedEntries.length} image(s). ${failures.length} file(s) failed to import.`)
+      const summary = [
+        `Loaded ${loadedEntries.length} image(s).`,
+        duplicates > 0 ? `Skipped ${duplicates} duplicate(s).` : '',
+        failures.length > 0 ? `${failures.length} file(s) failed to import.` : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+
+      setStatus(`${summary} Select thumbnail and adjust crop before export.`)
+      return
+    }
+
+    if (duplicates > 0 && failures.length === 0) {
+      setStatus(`Skipped ${duplicates} duplicate image(s).`)
       return
     }
 
     setStatus(`Import failed: ${failures[0] ?? 'No supported image file found.'}`)
+  }
+
+  const buildProjectPayload = async (): Promise<PhotoPainterProjectPayload> => {
+    const imageRecords = new Map<string, PhotoPainterProjectPayload['images'][number]>()
+
+    for (const entry of images) {
+      if (imageRecords.has(entry.image.hash)) {
+        continue
+      }
+
+      const bytes = new Uint8Array(await entry.image.blob.arrayBuffer())
+      imageRecords.set(entry.image.hash, {
+        hash: entry.image.hash,
+        name: entry.image.name,
+        mimeType: entry.image.mimeType,
+        width: entry.image.width,
+        height: entry.image.height,
+        dataBase64: uint8ToBase64(bytes),
+      })
+    }
+
+    return {
+      app: 'photopainter-converter',
+      exportedAt: new Date().toISOString(),
+      images: [...imageRecords.values()],
+      entries: images.map((entry) => ({
+        imageHash: entry.image.hash,
+        crop: { x: entry.crop.x, y: entry.crop.y },
+        zoom: entry.zoom,
+        croppedAreaPixels: {
+          x: entry.croppedAreaPixels.x,
+          y: entry.croppedAreaPixels.y,
+          width: entry.croppedAreaPixels.width,
+          height: entry.croppedAreaPixels.height,
+        },
+        orientation: entry.orientation,
+        rotationDeg: entry.rotationDeg,
+        constrainToImage: entry.constrainToImage,
+      })),
+    }
+  }
+
+  const handleExportProject = async () => {
+    if (images.length === 0) {
+      return
+    }
+
+    const bridge = window.desktopBridge
+
+    setIsProjectBusy(true)
+    setStatus(`Preparing project with ${images.length} image(s)...`)
+
+    try {
+      const payload = await buildProjectPayload()
+
+      if (bridge?.saveProject) {
+        try {
+          const result = await bridge.saveProject({
+            defaultName: 'photopainter-project.photopaint',
+            project: payload,
+          })
+
+          if (result.canceled) {
+            setStatus('Project export was canceled.')
+            return
+          }
+
+          setStatus(`Project saved to ${result.filePath ?? 'selected location'}.`)
+          return
+        } catch (error) {
+          if (!isMissingIpcHandlerError(error, 'dialog:save-project')) {
+            throw error
+          }
+        }
+      }
+
+      downloadTextFile(
+        'photopainter-project.photopaint',
+        JSON.stringify(payload, null, 2),
+        'application/json',
+      )
+      setStatus('Project exported via file download.')
+    } catch (error) {
+      console.error('[export-project]', error)
+      const message = error instanceof Error ? error.message : 'Unknown project export problem.'
+      setStatus(`Project export failed: ${message}`)
+    } finally {
+      setIsProjectBusy(false)
+    }
+  }
+
+  const handleImportProject = async () => {
+    setIsProjectBusy(true)
+    setStatus('Loading project...')
+    console.log('Starting project import')
+    try {
+      const file = projectInputRef.current?.files?.[0]
+      if (!file) {
+        setStatus('Project import failed: no file was selected.')
+        return
+      }
+
+      const text = await file.text()
+      let payload: PhotoPainterProjectPayload
+
+      try {
+        payload = JSON.parse(text) as PhotoPainterProjectPayload
+      } catch (parseError) {
+        setStatus(
+          `Project import failed: ${parseError instanceof Error ? parseError.message : 'Unable to parse project file'}`,
+        )
+        return
+      }
+
+      if (!isProjectPayload(payload)) {
+        setStatus('Project import failed: invalid .photopaint structure.')
+        return
+      }
+
+      const imported = await importProjectPayload(payload)
+      if (imported.added > 0) {
+        const summary = [
+          `Imported ${imported.added} image(s) from project.`,
+          imported.duplicates > 0 ? `Skipped ${imported.duplicates} duplicate(s).` : '',
+          imported.skippedMissing > 0 ? `Skipped ${imported.skippedMissing} missing record(s).` : '',
+          imported.decodeFailed > 0 ? `${imported.decodeFailed} image(s) failed to decode.` : '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+        setStatus(summary)
+        return
+      }
+
+      const noAddedSummary = [
+        'No new images were imported from project.',
+        imported.duplicates > 0 ? `Skipped ${imported.duplicates} duplicate(s).` : '',
+        imported.skippedMissing > 0 ? `Skipped ${imported.skippedMissing} missing record(s).` : '',
+        imported.decodeFailed > 0 ? `${imported.decodeFailed} image(s) failed to decode.` : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+      setStatus(noAddedSummary)
+    } catch (error) {
+      console.error('[import-project]', error)
+      const message = error instanceof Error ? error.message : 'Unknown project import problem.'
+      setStatus(`Project import failed: ${message}`)
+    } finally {
+      if (projectInputRef.current) {
+        projectInputRef.current.value = ''
+      }
+      setIsProjectBusy(false)
+    }
+  }
+
+  const importProjectPayload = async (payload: PhotoPainterProjectPayload) => {
+    const decodedByHash = new Map<string, LoadedImage>()
+    let decodeFailed = 0
+
+    for (const projectImage of payload.images) {
+      if (decodedByHash.has(projectImage.hash)) {
+        continue
+      }
+
+      try {
+        const bytes = base64ToUint8(projectImage.dataBase64)
+        const blob = new Blob([bytes], { type: projectImage.mimeType || 'application/octet-stream' })
+        const src = URL.createObjectURL(blob)
+        decodedByHash.set(projectImage.hash, {
+          src,
+          blob,
+          hash: projectImage.hash,
+          name: projectImage.name,
+          mimeType: projectImage.mimeType,
+          width: projectImage.width,
+          height: projectImage.height,
+        })
+      } catch {
+        decodeFailed += 1
+      }
+    }
+
+    const knownHashes = new Set(imagesRef.current.map((entry) => entry.image.hash))
+    const loadedEntries: ImageEntry[] = []
+    const keptHashes = new Set<string>()
+    let duplicates = 0
+    let skippedMissing = 0
+
+    for (const entry of payload.entries) {
+      const image = decodedByHash.get(entry.imageHash)
+      if (!image) {
+        skippedMissing += 1
+        continue
+      }
+
+      if (knownHashes.has(image.hash)) {
+        duplicates += 1
+        continue
+      }
+
+      knownHashes.add(image.hash)
+      keptHashes.add(image.hash)
+      loadedEntries.push(createImageEntry(image, sanitizeProjectEntrySettings(entry, image)))
+    }
+
+    for (const [hash, image] of decodedByHash) {
+      if (!keptHashes.has(hash)) {
+        releaseImage(image.src)
+      }
+    }
+
+    if (loadedEntries.length > 0) {
+      setImages((current) => [...current, ...loadedEntries])
+      setActiveImageId((current) => current ?? loadedEntries[0].id)
+    }
+
+    return {
+      added: loadedEntries.length,
+      duplicates,
+      skippedMissing,
+      decodeFailed,
+    }
   }
 
   const handleDrop = async (event: React.DragEvent<HTMLElement>) => {
@@ -407,6 +678,7 @@ function App() {
         try {
           dirHandle = await dirPicker({ mode: 'readwrite' })
         } catch (error) {
+          console.error('[export-bmp-dir-picker]', error)
           if (error instanceof DOMException && error.name === 'AbortError') {
             setStatus('Export was canceled.')
             return
@@ -432,6 +704,7 @@ function App() {
       }
       setStatus(`Exported ${uniqueFiles.length} BMP file(s) via browser downloads.`)
     } catch (error) {
+      console.error('[export-bmp]', error)
       const message = error instanceof Error ? error.message : 'Unknown problem during export.'
       setStatus(`Export failed: ${message}`)
     } finally {
@@ -456,6 +729,22 @@ function App() {
           <button className="primary" type="button" onClick={() => inputRef.current?.click()}>
             Select images
           </button>
+          <button
+            className="secondary"
+            type="button"
+            disabled={isProjectBusy || isExporting || images.length === 0}
+            onClick={handleExportProject}
+          >
+            {isProjectBusy ? 'Working...' : 'Export project (.photopaint)'}
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            disabled={isProjectBusy || isExporting}
+            onClick={() => projectInputRef.current?.click()}
+          >
+            {isProjectBusy ? 'Working...' : 'Import project (.photopaint)'}
+          </button>
           <input
             ref={inputRef}
             hidden
@@ -463,6 +752,15 @@ function App() {
             type="file"
             multiple
             onChange={handleFileSelection}
+          />
+          <input
+            ref={projectInputRef}
+            hidden
+            accept={PROJECT_FILE_FORMATS}
+            type="file"
+            onChange={() => {
+              void handleImportProject()
+            }}
           />
           <p className="muted">Supported formats: JPG, PNG, WebP, BMP, GIF, HEIC.</p>
         </section>
@@ -582,7 +880,7 @@ function App() {
           <button
             className="primary"
             type="button"
-            disabled={images.length === 0 || isExporting}
+            disabled={images.length === 0 || isExporting || isProjectBusy}
             onClick={handleExportAll}
           >
             {isExporting ? 'Exporting...' : `Export all (${images.length})`}
@@ -733,18 +1031,20 @@ function App() {
   )
 }
 
-const createImageEntry = (image: LoadedImage): ImageEntry => {
+const createImageEntry = (image: LoadedImage, settings?: ProjectEntrySettings): ImageEntry => {
   const orientation: Orientation = 'landscape'
+  const initialArea = createInitialArea(image, orientation)
+
   return {
     id: createId(),
     image,
-    crop: INITIAL_CROP,
-    zoom: 1,
-    croppedAreaPixels: createInitialArea(image, orientation),
-    orientation,
-    rotationDeg: 0,
+    crop: settings?.crop ?? INITIAL_CROP,
+    zoom: settings?.zoom ?? 1,
+    croppedAreaPixels: settings?.croppedAreaPixels ?? initialArea,
+    orientation: settings?.orientation ?? orientation,
+    rotationDeg: settings?.rotationDeg ?? 0,
     mediaViewport: null,
-    constrainToImage: false,
+    constrainToImage: settings?.constrainToImage ?? false,
   }
 }
 
@@ -898,6 +1198,77 @@ const saveBmpInBrowser = async (fileName: string, data: Uint8Array) => {
     canceled: false,
     pathHint: undefined,
   }
+}
+
+const isProjectPayload = (value: unknown): value is PhotoPainterProjectPayload => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<PhotoPainterProjectPayload>
+  if (candidate.app !== 'photopainter-converter') {
+    return false
+  }
+
+  if (!Array.isArray(candidate.images) || !Array.isArray(candidate.entries)) {
+    return false
+  }
+
+  return true
+}
+
+const sanitizeProjectEntrySettings = (
+  value: PhotoPainterProjectPayload['entries'][number],
+  image: LoadedImage,
+): ProjectEntrySettings => {
+  const orientation = value.orientation === 'portrait' ? 'portrait' : 'landscape'
+  const fallbackArea = createInitialArea(image, orientation)
+
+  return {
+    crop: {
+      x: finiteOr(value.crop?.x, INITIAL_CROP.x),
+      y: finiteOr(value.crop?.y, INITIAL_CROP.y),
+    },
+    zoom: clamp(finiteOr(value.zoom, 1), MIN_ZOOM, MAX_ZOOM),
+    croppedAreaPixels: sanitizeArea(value.croppedAreaPixels, fallbackArea, image),
+    orientation,
+    rotationDeg: normalizeRotation(finiteOr(value.rotationDeg, 0)),
+    constrainToImage: Boolean(value.constrainToImage),
+  }
+}
+
+const sanitizeArea = (value: Area, fallback: Area, image: LoadedImage): Area => {
+  const width = Math.min(image.width, Math.max(1, Math.round(finiteOr(value?.width, fallback.width))))
+  const height = Math.min(image.height, Math.max(1, Math.round(finiteOr(value?.height, fallback.height))))
+  const x = Math.max(0, Math.min(image.width - width, Math.round(finiteOr(value?.x, fallback.x))))
+  const y = Math.max(0, Math.min(image.height - height, Math.round(finiteOr(value?.y, fallback.y))))
+  return { x, y, width, height }
+}
+
+const finiteOr = (value: unknown, fallback: number) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+
+const uint8ToBase64 = (bytes: Uint8Array) => {
+  let binary = ''
+  const chunkSize = 0x8000
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+
+  return btoa(binary)
+}
+
+const base64ToUint8 = (encoded: string) => {
+  const binary = atob(encoded)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
 }
 
 export default App
