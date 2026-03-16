@@ -73,6 +73,19 @@ const pickExistingPath = (candidates) => {
   return null
 }
 
+const resolveAppIconPath = () => {
+  const candidates = [
+    path.resolve(__dirname, '..', 'build', 'icon.png'),
+    path.resolve(__dirname, '..', 'icon.png'),
+    path.join(process.resourcesPath, 'app', 'build', 'icon.png'),
+    path.join(process.resourcesPath, 'app', 'icon.png'),
+  ]
+
+  const iconPath = pickExistingPath(candidates)
+  appendRuntimeLog('app.icon.resolve', { candidates, iconPath })
+  return iconPath
+}
+
 const resolvePreloadPath = () => {
   const candidates = [
     path.join(__dirname, 'preload.cjs'),
@@ -100,6 +113,8 @@ const resolveRendererIndexPath = () => {
 }
 
 const createWindow = async () => {
+  const appIconPath = resolveAppIconPath()
+
   const window = new BrowserWindow({
     width: 1480,
     height: 960,
@@ -107,6 +122,7 @@ const createWindow = async () => {
     minHeight: 820,
     backgroundColor: '#f4efe7',
     title: 'PhotoPainter Converter',
+    ...(appIconPath ? { icon: appIconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -301,6 +317,12 @@ app.whenReady().then(async () => {
     userDataPath: app.getPath('userData'),
     appPath: app.getAppPath(),
   })
+
+  const appIconPath = resolveAppIconPath()
+
+  if (process.platform === 'darwin' && appIconPath && app.dock?.setIcon) {
+    app.dock.setIcon(appIconPath)
+  }
 
   await createWindow()
 

@@ -25,6 +25,7 @@
     "@vitejs/plugin-react": "^5.0.2",
     "electron": "^37.2.6",
     "electron-builder": "^26.0.12",
+    "png-to-ico": "^3.0.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.3"
   },
@@ -32,8 +33,10 @@
     "appId": "com.matko.photopainterconverter",
     "productName": "PhotoPainter Converter",
     "asar": false,
+    "beforeBuild": "scripts/generate-icons.cjs",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -44,12 +47,14 @@
       "target": [
         "dir"
       ],
-      "category": "public.app-category.graphics-design"
+      "category": "public.app-category.graphics-design",
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
         "portable"
-      ]
+      ],
+      "icon": "build/icon.ico"
     }
   }
 }
