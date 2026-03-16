@@ -32,7 +32,7 @@
   "build": {
     "appId": "com.matko.photopainterconverter",
     "productName": "PhotoPainter Converter",
-    "asar": false,
+    "asar": true,
     "beforeBuild": "scripts/generate-icons.cjs",
     "directories": {
       "output": "release",

@@ -79,6 +79,8 @@ const resolveAppIconPath = () => {
     path.resolve(__dirname, '..', 'icon.png'),
     path.join(process.resourcesPath, 'app', 'build', 'icon.png'),
     path.join(process.resourcesPath, 'app', 'icon.png'),
+    path.join(process.resourcesPath, 'app.asar', 'build', 'icon.png'),
+    path.join(process.resourcesPath, 'app.asar', 'icon.png'),
   ]
 
   const iconPath = pickExistingPath(candidates)
@@ -114,6 +116,11 @@ const resolveRendererIndexPath = () => {
 
 const createWindow = async () => {
   const appIconPath = resolveAppIconPath()
+  const preloadPath = resolvePreloadPath()
+
+  if (!preloadPath) {
+    throw new Error('Missing preload script')
+  }
 
   const window = new BrowserWindow({
     width: 1480,
@@ -124,7 +131,7 @@ const createWindow = async () => {
     title: 'PhotoPainter Converter',
     ...(appIconPath ? { icon: appIconPath } : {}),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
