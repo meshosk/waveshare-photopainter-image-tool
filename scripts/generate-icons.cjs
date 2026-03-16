@@ -53,7 +53,9 @@ const generateMacIcon = () => {
     return
   }
 
-  const iconsetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'photopainter-iconset-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'photopainter-iconset-'))
+  const iconsetDir = `${tempDir}.iconset`
+  fs.renameSync(tempDir, iconsetDir)
 
   try {
     for (const [fileName, size] of iconsetEntries) {
