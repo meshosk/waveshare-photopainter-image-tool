@@ -26,6 +26,7 @@ type ImageEntry = {
     naturalWidth: number
     naturalHeight: number
   } | null
+  constrainToImage: boolean
 }
 
 type BatchExportFile = {
@@ -53,7 +54,6 @@ function App() {
   const [images, setImages] = useState<ImageEntry[]>([])
   const [activeImageId, setActiveImageId] = useState<string | null>(null)
   const [cropSize, setCropSize] = useState<{ width: number; height: number } | undefined>(undefined)
-  const [constrainToImage, setConstrainToImage] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [status, setStatus] = useState('Upload one or more images, set crop for each, and export BMP files.')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -77,7 +77,7 @@ function App() {
         )
       : MIN_ZOOM
 
-  const effectiveMinZoom = constrainToImage ? Math.max(MIN_ZOOM, minZoomToFit) : MIN_ZOOM
+  const effectiveMinZoom = activeImage?.constrainToImage ? Math.max(MIN_ZOOM, minZoomToFit) : MIN_ZOOM
 
   useEffect(() => {
     imagesRef.current = images
@@ -211,7 +211,7 @@ function App() {
   ])
 
   useEffect(() => {
-    if (constrainToImage && cropSize && activeImage?.mediaViewport) {
+    if (activeImage?.constrainToImage && cropSize && activeImage?.mediaViewport) {
       const minZoom = Math.max(
         MIN_ZOOM,
         Math.max(
@@ -230,7 +230,7 @@ function App() {
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [constrainToImage])
+  }, [activeImage?.constrainToImage])
 
   const paletteLabels = useMemo(
     () => PHOTO_PAINTER_PALETTE.map((entry) => entry.name).join(', '),
@@ -562,8 +562,14 @@ function App() {
             <input
               id="constrain-crop"
               type="checkbox"
-              checked={constrainToImage}
-              onChange={(e) => setConstrainToImage(e.target.checked)}
+              checked={activeImage?.constrainToImage ?? false}
+              disabled={!activeImage}
+              onChange={(e) =>
+                updateActiveImage((entry) => ({
+                  ...entry,
+                  constrainToImage: e.target.checked,
+                }))
+              }
             />
             <span>Constrain crop to image</span>
           </label>
@@ -663,7 +669,7 @@ function App() {
                 cropSize={cropSize}
                 showGrid={true}
                 objectFit="contain"
-                restrictPosition={constrainToImage}
+                restrictPosition={activeImage?.constrainToImage ?? false}
                 rotation={activeImage.rotationDeg}
                 onCropChange={(crop) =>
                   updateActiveImage((entry) => ({
@@ -738,6 +744,7 @@ const createImageEntry = (image: LoadedImage): ImageEntry => {
     orientation,
     rotationDeg: 0,
     mediaViewport: null,
+    constrainToImage: false,
   }
 }
 
