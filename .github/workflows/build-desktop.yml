@@ -2,6 +2,16 @@ name: Build Desktop Releases
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Select which desktop artifact to build
+        required: true
+        default: windows
+        type: choice
+        options:
+          - windows
+          - macos
+          - all
   push:
     tags:
       - 'v*'
@@ -14,6 +24,7 @@ env:
 
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'all' || (github.event.inputs.target == 'windows' && matrix.os == 'windows-latest') || (github.event.inputs.target == 'macos' && matrix.os == 'macos-latest')
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:

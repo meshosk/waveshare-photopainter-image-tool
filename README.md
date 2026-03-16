@@ -76,6 +76,8 @@ These commands build the renderer into `dist` and then run `electron-builder` fo
 
 Use these commands on an appropriate host environment for the target platform. The Docker preview container is intended only for the browser preview workflow, not for final desktop packaging.
 
+If you are on Apple Silicon and do not want to pull the large Wine-based Docker image, the repository already includes a GitHub Actions workflow in [.github/workflows/build-desktop.yml](.github/workflows/build-desktop.yml). Run it manually with the `windows` target and download the produced `.exe` artifact from GitHub.
+
 ## Packaging With Docker
 
 If you do not want to install Node.js on the host, use Docker for the supported Windows packaging target:
@@ -85,6 +87,8 @@ docker compose run --rm build-win
 ```
 
 This service installs dependencies inside the container and then runs the matching npm packaging script.
+
+On Apple Silicon Macs, the service is pinned to `linux/amd64`. Windows packaging relies on `wine`, and the `electronuserland/builder:wine` workflow is reliable in the x64 container variant. A Windows icon can make that dependency visible because Electron Builder needs Windows resource-editing tools when stamping the executable.
 
 macOS packaging is the exception. A generic Linux Docker container cannot produce a proper macOS Electron build. Keep `npm run build:mac` for a real macOS Node environment or a macOS CI runner.
 

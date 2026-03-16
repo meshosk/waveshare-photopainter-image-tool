@@ -20,6 +20,7 @@ services:
 
   build-win:
     image: electronuserland/builder:wine
+    platform: linux/amd64
     working_dir: /project
     volumes:
       - .:/project
