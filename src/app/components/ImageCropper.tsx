@@ -30,14 +30,20 @@ export function ImageCropper({
   onCropComplete,
   onMediaLoaded,
 }: ImageCropperProps) {
+  const enableDrop = !activeImage
+
   return (
     <section
       className={`dropzone ${activeImage ? 'loaded' : ''}`}
-      onDragEnter={(event) => event.preventDefault()}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => {
-        void onDrop(event)
-      }}
+      onDragEnter={enableDrop ? (event) => event.preventDefault() : undefined}
+      onDragOver={enableDrop ? (event) => event.preventDefault() : undefined}
+      onDrop={
+        enableDrop
+          ? (event) => {
+              void onDrop(event)
+            }
+          : undefined
+      }
     >
       {activeImage ? (
         <div className="crop-shell" ref={cropShellRef}>

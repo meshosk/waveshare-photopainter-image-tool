@@ -379,6 +379,7 @@ function App() {
           activeImageId={activeImageId}
           onSelect={setActiveImageId}
           onRemove={removeImage}
+          onDrop={handleDrop}
         />
 
         <ImageCropper
