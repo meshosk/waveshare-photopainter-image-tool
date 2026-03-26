@@ -8,6 +8,9 @@ Desktop and browser tool for preparing images for Waveshare PhotoPainter panels.
 
 The current UI is titled `Waveshare PhotoPainter image tool` and is built around a multi-image workflow: import several source files, tune crop per image, preview the final dithered result, then export all BMP files in one run.
 
+App generate formated pictures for this exact e-ink photoframe, but it will also work on this e-ink display: - [https://www.waveshare.com/wiki/PhotoPainter](https://www.waveshare.com/wiki/PhotoPainter).
+
+
 ## What The App Does
 
 - Imports one or more source images at once
