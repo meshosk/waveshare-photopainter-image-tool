@@ -1,3 +1,7 @@
+# Disclaimer
+
+Whole app is coded by AI... yeah, I know... it was just one experiment... 
+
 # PhotoPainter Converter
 
 Desktop and browser tool for preparing images for Waveshare PhotoPainter panels.
