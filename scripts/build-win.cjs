@@ -18,10 +18,10 @@ const ensureCleanReleaseDir = () => {
 }
 
 const runBuild = () => {
-  const electronBuilderBin = path.join(projectRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder')
+  const electronBuilderCli = path.join(projectRoot, 'node_modules', 'electron-builder', 'cli.js')
   const result = spawnSync(
-    electronBuilderBin,
-    ['--win', 'portable', '--x64', '--publish', 'never'],
+    process.execPath,
+    [electronBuilderCli, '--win', 'portable', '--x64', '--publish', 'never'],
     {
       cwd: projectRoot,
       stdio: 'inherit',
