@@ -13,6 +13,210 @@ const FALLBACK_LOG_PATHS = [
   path.join(os.tmpdir(), 'photopainter-converter-runtime.log'),
 ]
 
+const pendingProjectExports = new Map()
+
+const isWhitespace = (char) => char === ' ' || char === '\n' || char === '\r' || char === '\t'
+
+async function* streamTopLevelArrayObjects(filePath, key) {
+  const keyToken = `"${key}"`
+  const input = fsSync.createReadStream(filePath, { encoding: 'utf8' })
+  let buffer = ''
+  let cursor = 0
+  let state = 'seek-key'
+  let objectStart = -1
+  let depth = 0
+  let inString = false
+  let isEscaped = false
+
+  const trimBuffer = (count) => {
+    if (count <= 0) {
+      return
+    }
+
+    buffer = buffer.slice(count)
+    cursor = Math.max(0, cursor - count)
+    if (objectStart >= 0) {
+      objectStart = Math.max(0, objectStart - count)
+    }
+  }
+
+  for await (const chunk of input) {
+    buffer += chunk
+
+    parseLoop: while (cursor < buffer.length) {
+      if (state === 'seek-key') {
+        const keyIndex = buffer.indexOf(keyToken, cursor)
+        if (keyIndex === -1) {
+          const keepFrom = Math.max(0, buffer.length - (keyToken.length + 32))
+          trimBuffer(keepFrom)
+          break parseLoop
+        }
+
+        cursor = keyIndex + keyToken.length
+        state = 'seek-array-start'
+      }
+
+      if (state === 'seek-array-start') {
+        while (cursor < buffer.length) {
+          const current = buffer[cursor]
+          if (current === '[') {
+            cursor += 1
+            state = 'seek-object'
+            continue parseLoop
+          }
+
+          if (current === ':' || isWhitespace(current)) {
+            cursor += 1
+            continue
+          }
+
+          throw new Error(`Invalid project file structure near ${key}.`)
+        }
+
+        break parseLoop
+      }
+
+      if (state === 'seek-object') {
+        while (cursor < buffer.length) {
+          const current = buffer[cursor]
+          if (current === ']') {
+            return
+          }
+
+          if (current === ',' || isWhitespace(current)) {
+            cursor += 1
+            continue
+          }
+
+          if (current === '{') {
+            objectStart = cursor
+            depth = 1
+            inString = false
+            isEscaped = false
+            cursor += 1
+            state = 'in-object'
+            continue parseLoop
+          }
+
+          throw new Error(`Unexpected token while reading ${key} array.`)
+        }
+
+        break parseLoop
+      }
+
+      if (state === 'in-object') {
+        while (cursor < buffer.length) {
+          const current = buffer[cursor]
+
+          if (inString) {
+            if (isEscaped) {
+              isEscaped = false
+            } else if (current === '\\') {
+              isEscaped = true
+            } else if (current === '"') {
+              inString = false
+            }
+          } else if (current === '"') {
+            inString = true
+          } else if (current === '{') {
+            depth += 1
+          } else if (current === '}') {
+            depth -= 1
+          }
+
+          cursor += 1
+
+          if (depth === 0) {
+            const serialized = buffer.slice(objectStart, cursor)
+            state = 'seek-object'
+            objectStart = -1
+            if (cursor > 1024 * 1024) {
+              trimBuffer(cursor)
+            }
+            yield JSON.parse(serialized)
+            continue parseLoop
+          }
+        }
+
+        if (objectStart > 0) {
+          trimBuffer(objectStart)
+          objectStart = 0
+        }
+        break parseLoop
+      }
+    }
+  }
+
+  if (state !== 'seek-object') {
+    throw new Error(`Unexpected end of project file while reading ${key}.`)
+  }
+}
+
+const streamProjectImport = async (webContents, jobId, filePath) => {
+  const sendEvent = (payload) => {
+    if (!webContents.isDestroyed()) {
+      webContents.send('project-import:event', { jobId, filePath, ...payload })
+    }
+  }
+
+  try {
+    sendEvent({ type: 'progress', phase: 'decoding', current: 0, total: undefined, imageName: 'Scanning project file...' })
+
+    let imageIndex = 0
+    for await (const value of streamTopLevelArrayObjects(filePath, 'images')) {
+      imageIndex += 1
+      sendEvent({
+        type: 'progress',
+        phase: 'decoding',
+        current: imageIndex,
+        total: undefined,
+        imageName: value?.name,
+      })
+      sendEvent({
+        type: 'image',
+        phase: 'decoding',
+        current: imageIndex,
+        total: undefined,
+        imageName: value?.name,
+        image: {
+          hash: value?.hash,
+          name: value?.name,
+          mimeType: value?.mimeType,
+          width: value?.width,
+          height: value?.height,
+          data: Buffer.from(value?.dataBase64 ?? '', 'base64'),
+        },
+      })
+    }
+
+    let entryIndex = 0
+    for await (const value of streamTopLevelArrayObjects(filePath, 'entries')) {
+      entryIndex += 1
+      sendEvent({
+        type: 'progress',
+        phase: 'restoring',
+        current: entryIndex,
+        total: undefined,
+        imageName: undefined,
+      })
+      sendEvent({
+        type: 'entry',
+        phase: 'restoring',
+        current: entryIndex,
+        total: undefined,
+        entry: value,
+      })
+    }
+
+    sendEvent({ type: 'complete' })
+  } catch (error) {
+    sendEvent({
+      type: 'error',
+      message: error instanceof Error ? error.message : 'Unable to import project file',
+    })
+  }
+}
+
 const getLogFilePath = () => {
   try {
     return path.join(app.getPath('userData'), 'runtime.log')
@@ -308,6 +512,100 @@ ipcMain.handle('dialog:save-project', async (_event, payload) => {
   return { canceled: false, filePath: result.filePath }
 })
 
+ipcMain.handle('dialog:begin-save-project-export', async (_event, payload) => {
+  const defaultName =
+    typeof payload?.defaultName === 'string' && payload.defaultName.trim()
+      ? payload.defaultName
+      : 'project.photopaint'
+
+  const result = await dialog.showSaveDialog({
+    title: 'Save PhotoPainter project',
+    defaultPath: defaultName,
+    filters: [
+      { name: 'PhotoPainter project', extensions: ['photopaint'] },
+      { name: 'JSON', extensions: ['json'] },
+    ],
+  })
+
+  if (result.canceled || !result.filePath) {
+    return { canceled: true }
+  }
+
+  try {
+    const exportedAt = typeof payload?.exportedAt === 'string' ? payload.exportedAt : new Date().toISOString()
+    const entriesSerialized = JSON.stringify(Array.isArray(payload?.entries) ? payload.entries : [])
+    const prefix = `{"app":"photopainter-converter","exportedAt":${JSON.stringify(exportedAt)},"images":[`
+    await fs.writeFile(result.filePath, prefix, 'utf8')
+    pendingProjectExports.set(result.filePath, { entriesSerialized })
+    return { canceled: false, filePath: result.filePath }
+  } catch (error) {
+    return {
+      canceled: false,
+      error: error instanceof Error ? error.message : 'Unable to initialize project export',
+    }
+  }
+})
+
+ipcMain.handle('dialog:append-project-export-image', async (_event, payload) => {
+  const filePath = typeof payload?.filePath === 'string' ? payload.filePath : ''
+  const state = pendingProjectExports.get(filePath)
+  if (!state) {
+    return { error: 'Project export session was not initialized.' }
+  }
+
+  try {
+    const image = payload?.image ?? {}
+    const serialized = JSON.stringify({
+      hash: image.hash,
+      name: image.name,
+      mimeType: image.mimeType,
+      width: image.width,
+      height: image.height,
+      dataBase64: Buffer.from(image.data ?? []).toString('base64'),
+    })
+    await fs.appendFile(filePath, `${payload?.prependComma ? ',' : ''}${serialized}`, 'utf8')
+    return {}
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Unable to append image to project export',
+    }
+  }
+})
+
+ipcMain.handle('dialog:finish-project-export', async (_event, payload) => {
+  const filePath = typeof payload?.filePath === 'string' ? payload.filePath : ''
+  const state = pendingProjectExports.get(filePath)
+  if (!state) {
+    return { error: 'Project export session was not initialized.' }
+  }
+
+  try {
+    await fs.appendFile(filePath, `],"entries":${state.entriesSerialized}}`, 'utf8')
+    pendingProjectExports.delete(filePath)
+    return {}
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Unable to finalize project export',
+    }
+  }
+})
+
+ipcMain.handle('dialog:abort-project-export', async (_event, payload) => {
+  const filePath = typeof payload?.filePath === 'string' ? payload.filePath : ''
+  pendingProjectExports.delete(filePath)
+
+  try {
+    if (filePath) {
+      await fs.rm(filePath, { force: true })
+    }
+    return {}
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Unable to clean up failed project export',
+    }
+  }
+})
+
 ipcMain.handle('dialog:load-project', async () => {
   const result = await dialog.showOpenDialog({
     title: 'Open PhotoPainter project',
@@ -335,6 +633,26 @@ ipcMain.handle('dialog:load-project', async () => {
       error: error instanceof Error ? error.message : 'Unable to parse project file',
     }
   }
+})
+
+ipcMain.handle('dialog:start-project-import', async (event) => {
+  const result = await dialog.showOpenDialog({
+    title: 'Open PhotoPainter project',
+    properties: ['openFile'],
+    filters: [
+      { name: 'PhotoPainter project', extensions: ['photopaint', 'json'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true }
+  }
+
+  const filePath = result.filePaths[0]
+  const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  void streamProjectImport(event.sender, jobId, filePath)
+  return { canceled: false, jobId, filePath }
 })
 
 app.whenReady().then(async () => {

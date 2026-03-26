@@ -1,4 +1,5 @@
-import type { BatchExportFile, SaveProjectResult } from './types'
+import type { BatchExportFile, ImageEntry, ProjectBuildProgress, SaveProjectResult } from './types'
+import { buildProjectPayload, createProjectEntries, getUniqueProjectImages } from './project'
 
 export const isMissingIpcHandlerError = (error: unknown, channel: string) =>
   error instanceof Error && error.message.includes(`No handler registered for '${channel}'`)
@@ -44,6 +45,84 @@ export const saveProjectFile = async (payload: PhotoPainterProjectPayload): Prom
     'application/json',
   )
   return { kind: 'downloaded' }
+}
+
+export const exportProjectFile = async (
+  images: ImageEntry[],
+  onProgress?: (progress: ProjectBuildProgress) => void,
+): Promise<SaveProjectResult> => {
+  const bridge = window.desktopBridge
+
+  if (bridge?.beginSaveProjectExport && bridge?.appendProjectExportImage && bridge?.finishProjectExport) {
+    const uniqueImages = getUniqueProjectImages(images)
+    const beginResult = await bridge.beginSaveProjectExport({
+      defaultName: 'photopainter-project.photopaint',
+      exportedAt: new Date().toISOString(),
+      entries: createProjectEntries(images),
+    })
+
+    if (beginResult.error) {
+      throw new Error(beginResult.error)
+    }
+
+    if (beginResult.canceled || !beginResult.filePath) {
+      return { kind: 'canceled' }
+    }
+
+    try {
+      for (let index = 0; index < uniqueImages.length; index += 1) {
+        const entry = uniqueImages[index]
+        onProgress?.({
+          phase: 'encoding',
+          current: index + 1,
+          total: uniqueImages.length,
+          imageName: entry.image.name,
+        })
+
+        const data = new Uint8Array(await entry.image.blob.arrayBuffer())
+
+        onProgress?.({
+          phase: 'saving',
+          current: index + 1,
+          total: uniqueImages.length,
+          imageName: entry.image.name,
+        })
+
+        const appendResult = await bridge.appendProjectExportImage({
+          filePath: beginResult.filePath,
+          prependComma: index > 0,
+          image: {
+            hash: entry.image.hash,
+            name: entry.image.name,
+            mimeType: entry.image.mimeType,
+            width: entry.image.width,
+            height: entry.image.height,
+            data,
+          },
+        })
+
+        if (appendResult.error) {
+          throw new Error(appendResult.error)
+        }
+      }
+
+      const finishResult = await bridge.finishProjectExport({ filePath: beginResult.filePath })
+      if (finishResult.error) {
+        throw new Error(finishResult.error)
+      }
+
+      return {
+        kind: 'saved',
+        filePath: beginResult.filePath,
+      }
+    } catch (error) {
+      await bridge.abortProjectExport?.({ filePath: beginResult.filePath })
+      throw error
+    }
+  }
+
+  const payload = await buildProjectPayload(images, onProgress)
+  return saveProjectFile(payload)
 }
 
 export const buildWaveshareFileName = (name: string) => {

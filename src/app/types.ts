@@ -40,16 +40,26 @@ export type ExportBmpProgress = {
 }
 
 export type ProjectBuildProgress = {
+  phase: 'encoding' | 'saving'
   current: number
   total: number
-  imageName: string
+  imageName?: string
 }
 
 export type ProjectImportProgress = {
   phase: 'decoding' | 'restoring'
   current: number
-  total: number
+  total?: number
   imageName?: string
+}
+
+export type ProjectBinaryImageRecord = {
+  hash: string
+  name: string
+  mimeType: string
+  width: number
+  height: number
+  data: Uint8Array
 }
 
 export type ProjectEntrySettings = {

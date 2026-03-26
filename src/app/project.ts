@@ -3,6 +3,7 @@ import { MAX_ZOOM, MIN_ZOOM, INITIAL_CROP } from './constants'
 import { createImageEntry, createInitialArea, normalizeRotation } from './imageEntries'
 import type {
   ImageEntry,
+  ProjectBinaryImageRecord,
   ProjectBuildProgress,
   ProjectEntrySettings,
   ProjectImportProgress,
@@ -11,10 +12,7 @@ import type {
 import type { LoadedImage } from '../image'
 import { releaseImage } from '../image'
 
-export const buildProjectPayload = async (
-  images: ImageEntry[],
-  onProgress?: (progress: ProjectBuildProgress) => void,
-): Promise<PhotoPainterProjectPayload> => {
+export const getUniqueProjectImages = (images: ImageEntry[]) => {
   const uniqueEntries: ImageEntry[] = []
   const knownHashes = new Set<string>()
 
@@ -27,11 +25,37 @@ export const buildProjectPayload = async (
     uniqueEntries.push(entry)
   }
 
+  return uniqueEntries
+}
+
+export const createProjectEntries = (images: ImageEntry[]): PhotoPainterProjectPayload['entries'] =>
+  images.map((entry) => ({
+    imageHash: entry.image.hash,
+    crop: { x: entry.crop.x, y: entry.crop.y },
+    zoom: entry.zoom,
+    croppedAreaPixels: {
+      x: entry.croppedAreaPixels.x,
+      y: entry.croppedAreaPixels.y,
+      width: entry.croppedAreaPixels.width,
+      height: entry.croppedAreaPixels.height,
+    },
+    orientation: entry.orientation,
+    rotationDeg: entry.rotationDeg,
+    constrainToImage: entry.constrainToImage,
+  }))
+
+export const buildProjectPayload = async (
+  images: ImageEntry[],
+  onProgress?: (progress: ProjectBuildProgress) => void,
+): Promise<PhotoPainterProjectPayload> => {
+  const uniqueEntries = getUniqueProjectImages(images)
+
   const imageRecords = new Map<string, PhotoPainterProjectPayload['images'][number]>()
 
   for (let index = 0; index < uniqueEntries.length; index += 1) {
     const entry = uniqueEntries[index]
     onProgress?.({
+      phase: 'encoding',
       current: index + 1,
       total: uniqueEntries.length,
       imageName: entry.image.name,
@@ -52,20 +76,7 @@ export const buildProjectPayload = async (
     app: 'photopainter-converter',
     exportedAt: new Date().toISOString(),
     images: [...imageRecords.values()],
-    entries: images.map((entry) => ({
-      imageHash: entry.image.hash,
-      crop: { x: entry.crop.x, y: entry.crop.y },
-      zoom: entry.zoom,
-      croppedAreaPixels: {
-        x: entry.croppedAreaPixels.x,
-        y: entry.croppedAreaPixels.y,
-        width: entry.croppedAreaPixels.width,
-        height: entry.croppedAreaPixels.height,
-      },
-      orientation: entry.orientation,
-      rotationDeg: entry.rotationDeg,
-      constrainToImage: entry.constrainToImage,
-    })),
+    entries: createProjectEntries(images),
   }
 }
 
@@ -125,18 +136,48 @@ export const importProjectPayload = async (
     }
   }
 
+  const imported = createProjectImportResult(decodedByHash, payload.entries, existingHashes, onProgress)
+
+  return {
+    ...imported,
+    decodeFailed,
+  }
+}
+
+export const createLoadedImageFromProjectBinary = (projectImage: ProjectBinaryImageRecord): LoadedImage => {
+  const blobBytes = new Uint8Array(projectImage.data)
+  const blob = new Blob([blobBytes], { type: projectImage.mimeType || 'application/octet-stream' })
+  const src = URL.createObjectURL(blob)
+
+  return {
+    src,
+    blob,
+    hash: projectImage.hash,
+    name: projectImage.name,
+    mimeType: projectImage.mimeType,
+    width: projectImage.width,
+    height: projectImage.height,
+  }
+}
+
+export const createProjectImportResult = (
+  decodedByHash: Map<string, LoadedImage>,
+  entries: PhotoPainterProjectPayload['entries'],
+  existingHashes: Iterable<string>,
+  onProgress?: (progress: ProjectImportProgress) => void,
+): Omit<ProjectImportResult, 'decodeFailed'> => {
   const knownHashes = new Set(existingHashes)
   const loadedEntries: ImageEntry[] = []
   const keptHashes = new Set<string>()
   let duplicates = 0
   let skippedMissing = 0
 
-  for (let index = 0; index < payload.entries.length; index += 1) {
-    const entry = payload.entries[index]
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
     onProgress?.({
       phase: 'restoring',
       current: index + 1,
-      total: payload.entries.length,
+      total: entries.length,
       imageName: decodedByHash.get(entry.imageHash)?.name,
     })
 
@@ -166,7 +207,6 @@ export const importProjectPayload = async (
     loadedEntries,
     duplicates,
     skippedMissing,
-    decodeFailed,
   }
 }
 

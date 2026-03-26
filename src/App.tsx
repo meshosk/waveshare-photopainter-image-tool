@@ -8,12 +8,22 @@ import { ImageCropper } from './app/components/ImageCropper'
 import { ImageThumbnailStrip } from './app/components/ImageThumbnailStrip'
 import { PreviewPanel } from './app/components/PreviewPanel'
 import { DEFAULT_STATUS, MAX_ZOOM, MIN_ZOOM } from './app/constants'
-import { saveProjectFile } from './app/fileHelpers'
+import { exportProjectFile } from './app/fileHelpers'
 import { clampCrop, createImageEntry, normalizeRotation } from './app/imageEntries'
 import { useCropSize } from './app/hooks/useCropSize'
 import { usePreview } from './app/hooks/usePreview'
-import { buildProjectPayload, importProjectPayload, isProjectPayload } from './app/project'
-import type { ExportBmpProgress, ImageEntry, ProjectBuildProgress, ProjectImportProgress } from './app/types'
+import {
+  createLoadedImageFromProjectBinary,
+  createProjectImportResult,
+  importProjectPayload,
+  isProjectPayload,
+} from './app/project'
+import type {
+  ExportBmpProgress,
+  ImageEntry,
+  ProjectBuildProgress,
+  ProjectImportProgress,
+} from './app/types'
 
 type ImportProgress = {
   totalFiles: number
@@ -334,8 +344,11 @@ function App() {
     })
 
     try {
-      const payload = await buildProjectPayload(images, (progress: ProjectBuildProgress) => {
-        const detail = `Encoding ${progress.current}/${progress.total}: ${progress.imageName}`
+      const result = await exportProjectFile(images, (progress: ProjectBuildProgress) => {
+        const detail =
+          progress.phase === 'saving'
+            ? `Saving ${progress.current}/${progress.total}: ${progress.imageName ?? 'image data'}`
+            : `Encoding ${progress.current}/${progress.total}: ${progress.imageName ?? 'image data'}`
         setStatus(detail)
         setProjectBusyOverlay({
           title: 'Exporting project',
@@ -344,12 +357,6 @@ function App() {
           total: progress.total,
         })
       })
-      setProjectBusyOverlay({
-        title: 'Exporting project',
-        detail: 'Saving project file to disk...',
-      })
-      setStatus('Saving project file to disk...')
-      const result = await saveProjectFile(payload)
 
       if (result.kind === 'canceled') {
         setStatus('Project export was canceled.')
@@ -381,6 +388,104 @@ function App() {
     })
 
     try {
+      const bridge = window.desktopBridge
+      if (bridge?.startProjectImport && bridge?.onProjectImportEvent) {
+        const startResult = await bridge.startProjectImport()
+        if (startResult.error) {
+          throw new Error(startResult.error)
+        }
+
+        if (startResult.canceled || !startResult.jobId) {
+          setStatus('Project import was canceled.')
+          return
+        }
+
+        const decodedByHash = new Map<string, ReturnType<typeof createLoadedImageFromProjectBinary>>()
+        const streamedEntries: PhotoPainterProjectPayload['entries'] = []
+
+        const imported = await new Promise<ReturnType<typeof createProjectImportResult>>((resolve, reject) => {
+          const unsubscribe = bridge.onProjectImportEvent((payload) => {
+            if (payload.jobId !== startResult.jobId) {
+              return
+            }
+
+            if (payload.type === 'progress' && payload.phase) {
+              const action = payload.phase === 'decoding' ? 'Decoding' : 'Restoring'
+              const detail = payload.total
+                ? `${action} ${payload.current ?? 0}/${payload.total}${payload.imageName ? `: ${payload.imageName}` : '...'}`
+                : `${action}${payload.imageName ? `: ${payload.imageName}` : '...'}`
+              setStatus(detail)
+              setProjectBusyOverlay({
+                title: 'Importing project',
+                detail,
+                current: payload.current,
+                total: payload.total,
+              })
+              return
+            }
+
+            if (payload.type === 'image' && payload.image) {
+              decodedByHash.set(payload.image.hash, createLoadedImageFromProjectBinary(payload.image))
+              return
+            }
+
+            if (payload.type === 'entry' && payload.entry) {
+              streamedEntries.push(payload.entry)
+              return
+            }
+
+            if (payload.type === 'complete') {
+              unsubscribe()
+              try {
+                resolve(
+                  createProjectImportResult(
+                    decodedByHash,
+                    streamedEntries,
+                    imagesRef.current.map((entry) => entry.image.hash),
+                  ),
+                )
+              } catch (error) {
+                reject(error)
+              }
+              return
+            }
+
+            if (payload.type === 'error') {
+              unsubscribe()
+              for (const image of decodedByHash.values()) {
+                releaseImage(image.src)
+              }
+              reject(new Error(payload.message || 'Unknown project import problem.'))
+            }
+          })
+        })
+
+        appendEntries(imported.loadedEntries)
+
+        if (imported.loadedEntries.length > 0) {
+          const summary = [
+            `Imported ${imported.loadedEntries.length} image(s) from project.`,
+            imported.duplicates > 0 ? `Skipped ${imported.duplicates} duplicate(s).` : '',
+            imported.skippedMissing > 0 ? `Skipped ${imported.skippedMissing} missing record(s).` : '',
+          ]
+            .filter(Boolean)
+            .join(' ')
+
+          setStatus(summary)
+          return
+        }
+
+        const noAddedSummary = [
+          'No new images were imported from project.',
+          imported.duplicates > 0 ? `Skipped ${imported.duplicates} duplicate(s).` : '',
+          imported.skippedMissing > 0 ? `Skipped ${imported.skippedMissing} missing record(s).` : '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+        setStatus(noAddedSummary)
+        return
+      }
+
       const file = projectInputRef.current?.files?.[0]
       if (!file) {
         setStatus('Project import failed: no file was selected.')
@@ -574,7 +679,14 @@ function App() {
         onExportProject={() => {
           void handleExportProject()
         }}
-        onOpenProject={() => projectInputRef.current?.click()}
+        onOpenProject={() => {
+          if (window.desktopBridge?.startProjectImport) {
+            void handleImportProject()
+            return
+          }
+
+          projectInputRef.current?.click()
+        }}
         inputRef={inputRef}
         projectInputRef={projectInputRef}
         onImageInputChange={(event) => {
