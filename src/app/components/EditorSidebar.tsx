@@ -1,5 +1,5 @@
 import { PHOTO_PAINTER_PALETTE } from '../../color'
-import type { CropPoint, ImageEntry } from '../types'
+import type { ImageEntry } from '../types'
 import { ACCEPTED_FORMATS, MAX_ZOOM, PROJECT_FILE_FORMATS } from '../constants'
 
 type EditorSidebarProps = {

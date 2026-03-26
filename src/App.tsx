@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { OUTPUT_SIZES } from './crop'
-import { releaseImage } from './image'
+import { loadImageFile, releaseImage } from './image'
 import { saveBmpBatch, renderBmpBatch } from './app/bmpExport'
 import { EditorSidebar } from './app/components/EditorSidebar'
 import { ImageCropper } from './app/components/ImageCropper'
@@ -8,18 +8,50 @@ import { ImageThumbnailStrip } from './app/components/ImageThumbnailStrip'
 import { PreviewPanel } from './app/components/PreviewPanel'
 import { DEFAULT_STATUS, MAX_ZOOM, MIN_ZOOM } from './app/constants'
 import { saveProjectFile } from './app/fileHelpers'
-import { clampCrop, normalizeRotation } from './app/imageEntries'
-import { importImageFiles } from './app/imageImport'
+import { clampCrop, createImageEntry, normalizeRotation } from './app/imageEntries'
 import { useCropSize } from './app/hooks/useCropSize'
 import { usePreview } from './app/hooks/usePreview'
 import { buildProjectPayload, importProjectPayload, isProjectPayload } from './app/project'
 import type { ImageEntry } from './app/types'
+
+type ImportProgress = {
+  totalFiles: number
+  processedFiles: number
+  visibleCount: number
+  pendingVisibleIds: string[]
+  completionStatus: string | null
+}
+
+const buildImportSummary = (loadedCount: number, failuresCount: number, duplicates: number) => {
+  if (loadedCount > 0 && failuresCount === 0 && duplicates === 0) {
+    return `Loaded ${loadedCount} image(s). Select thumbnail and adjust crop before export.`
+  }
+
+  if (loadedCount > 0) {
+    const summary = [
+      `Loaded ${loadedCount} image(s).`,
+      duplicates > 0 ? `Skipped ${duplicates} duplicate(s).` : '',
+      failuresCount > 0 ? `${failuresCount} file(s) failed to import.` : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+
+    return `${summary} Select thumbnail and adjust crop before export.`
+  }
+
+  if (duplicates > 0 && failuresCount === 0) {
+    return `Skipped ${duplicates} duplicate image(s).`
+  }
+
+  return `Import failed: No supported image file found.`
+}
 
 function App() {
   const [images, setImages] = useState<ImageEntry[]>([])
   const [activeImageId, setActiveImageId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
   const [isProjectBusy, setIsProjectBusy] = useState(false)
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null)
   const [status, setStatus] = useState(DEFAULT_STATUS)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const projectInputRef = useRef<HTMLInputElement | null>(null)
@@ -35,6 +67,14 @@ function App() {
   const aspect = outputSize.width / outputSize.height
   const cropSize = useCropSize(cropShellRef, aspect, activeImageId)
   const previewUrl = usePreview(activeImage, outputSize)
+  const importIndicator = importProgress
+    ? {
+        loadedCount: importProgress.visibleCount,
+        totalCount: importProgress.totalFiles,
+        remainingProcessingCount: Math.max(0, importProgress.totalFiles - importProgress.processedFiles),
+        remainingRenderCount: importProgress.pendingVisibleIds.length,
+      }
+    : null
 
   const minZoomToFit =
     cropSize && activeImage?.mediaViewport
@@ -57,6 +97,22 @@ function App() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (!importProgress) {
+      return
+    }
+
+    if (importProgress.processedFiles < importProgress.totalFiles || importProgress.pendingVisibleIds.length > 0) {
+      return
+    }
+
+    if (importProgress.completionStatus) {
+      setStatus(importProgress.completionStatus)
+    }
+
+    setImportProgress(null)
+  }, [importProgress])
 
   const updateActiveImage = (updater: (entry: ImageEntry) => ImageEntry) => {
     if (!activeImageId) {
@@ -89,9 +145,20 @@ function App() {
     }
   }, [activeImage?.constrainToImage, cropSize])
 
-  const appendEntries = (loadedEntries: ImageEntry[]) => {
+  const appendEntries = (loadedEntries: ImageEntry[], options?: { trackVisibility?: boolean }) => {
     if (loadedEntries.length === 0) {
       return
+    }
+
+    if (options?.trackVisibility) {
+      setImportProgress((current) =>
+        current
+          ? {
+              ...current,
+              pendingVisibleIds: [...current.pendingVisibleIds, ...loadedEntries.map((entry) => entry.id)],
+            }
+          : current,
+      )
     }
 
     setImages((current) => [...current, ...loadedEntries])
@@ -106,37 +173,71 @@ function App() {
   }
 
   const importImages = async (files: File[]) => {
-    const { loadedEntries, failures, duplicates } = await importImageFiles(
-      files,
-      imagesRef.current.map((entry) => entry.image.hash),
+    const knownHashes = new Set(imagesRef.current.map((entry) => entry.image.hash))
+    let loadedCount = 0
+    let failuresCount = 0
+    let duplicates = 0
+
+    setImportProgress({
+      totalFiles: files.length,
+      processedFiles: 0,
+      visibleCount: 0,
+      pendingVisibleIds: [],
+      completionStatus: null,
+    })
+
+    for (const file of files) {
+      try {
+        const loaded = await loadImageFile(file)
+
+        if (knownHashes.has(loaded.hash)) {
+          duplicates += 1
+          releaseImage(loaded.src)
+        } else {
+          knownHashes.add(loaded.hash)
+          const entry = createImageEntry(loaded)
+          loadedCount += 1
+          appendEntries([entry], { trackVisibility: true })
+        }
+      } catch (error) {
+        console.error('[import-images]', error)
+        failuresCount += 1
+      } finally {
+        setImportProgress((current) =>
+          current
+            ? {
+                ...current,
+                processedFiles: current.processedFiles + 1,
+              }
+            : current,
+        )
+      }
+    }
+
+    const completionStatus = buildImportSummary(loadedCount, failuresCount, duplicates)
+
+    setImportProgress((current) =>
+      current
+        ? {
+            ...current,
+            completionStatus,
+          }
+        : current,
     )
+  }
 
-    appendEntries(loadedEntries)
+  const handleThumbnailVisible = (id: string) => {
+    setImportProgress((current) => {
+      if (!current || !current.pendingVisibleIds.includes(id)) {
+        return current
+      }
 
-    if (loadedEntries.length > 0 && failures.length === 0 && duplicates === 0) {
-      setStatus(`Loaded ${loadedEntries.length} image(s). Select thumbnail and adjust crop before export.`)
-      return
-    }
-
-    if (loadedEntries.length > 0) {
-      const summary = [
-        `Loaded ${loadedEntries.length} image(s).`,
-        duplicates > 0 ? `Skipped ${duplicates} duplicate(s).` : '',
-        failures.length > 0 ? `${failures.length} file(s) failed to import.` : '',
-      ]
-        .filter(Boolean)
-        .join(' ')
-
-      setStatus(`${summary} Select thumbnail and adjust crop before export.`)
-      return
-    }
-
-    if (duplicates > 0 && failures.length === 0) {
-      setStatus(`Skipped ${duplicates} duplicate image(s).`)
-      return
-    }
-
-    setStatus(`Import failed: ${failures[0] ?? 'No supported image file found.'}`)
+      return {
+        ...current,
+        visibleCount: current.visibleCount + 1,
+        pendingVisibleIds: current.pendingVisibleIds.filter((pendingId) => pendingId !== id),
+      }
+    })
   }
 
   const handleFileSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -282,6 +383,17 @@ function App() {
 
       return next
     })
+
+    setImportProgress((current) => {
+      if (!current || !current.pendingVisibleIds.includes(id)) {
+        return current
+      }
+
+      return {
+        ...current,
+        pendingVisibleIds: current.pendingVisibleIds.filter((pendingId) => pendingId !== id),
+      }
+    })
   }
 
   const handleExportAll = async () => {
@@ -380,6 +492,8 @@ function App() {
           onSelect={setActiveImageId}
           onRemove={removeImage}
           onDrop={handleDrop}
+          onImageVisible={handleThumbnailVisible}
+          importProgress={importIndicator}
         />
 
         <ImageCropper

@@ -7,6 +7,13 @@ type ImageThumbnailStripProps = {
   onSelect: (id: string) => void
   onRemove: (id: string) => void
   onDrop: (event: React.DragEvent<HTMLElement>) => void | Promise<void>
+  onImageVisible: (id: string) => void
+  importProgress: {
+    loadedCount: number
+    totalCount: number
+    remainingProcessingCount: number
+    remainingRenderCount: number
+  } | null
 }
 
 const hasFilePayload = (event: React.DragEvent<HTMLElement>) => event.dataTransfer.types.includes('Files')
@@ -17,6 +24,8 @@ export function ImageThumbnailStrip({
   onSelect,
   onRemove,
   onDrop,
+  onImageVisible,
+  importProgress,
 }: ImageThumbnailStripProps) {
   const dragDepthRef = useRef(0)
   const [isDragActive, setIsDragActive] = useState(false)
@@ -67,6 +76,29 @@ export function ImageThumbnailStrip({
         void onDrop(event)
       }}
     >
+      {importProgress ? (
+        <div className="thumbs-progress" role="status" aria-live="polite">
+          <div
+            className="thumbs-progress-fill"
+            aria-hidden="true"
+            style={{
+              width: `${Math.max(
+                8,
+                Math.round((importProgress.loadedCount / Math.max(1, importProgress.totalCount)) * 100),
+              )}%`,
+            }}
+          />
+          <span className="thumbs-progress-label">
+            {importProgress.loadedCount}/{importProgress.totalCount} loaded
+            {importProgress.remainingProcessingCount > 0
+              ? `, ${importProgress.remainingProcessingCount} processing`
+              : importProgress.remainingRenderCount > 0
+                ? `, ${importProgress.remainingRenderCount} rendering`
+                : ', finalizing'}
+          </span>
+        </div>
+      ) : null}
+
       <div className="thumb-strip" role="list" aria-label="Imported images">
         {images.map((entry) => (
           <article
@@ -82,7 +114,7 @@ export function ImageThumbnailStrip({
               }
             }}
           >
-            <img src={entry.image.src} alt={entry.image.name} />
+            <img src={entry.image.src} alt={entry.image.name} onLoad={() => onImageVisible(entry.id)} />
             <div className="thumb-meta">
               <span title={entry.image.name}>{entry.image.name}</span>
               <button
