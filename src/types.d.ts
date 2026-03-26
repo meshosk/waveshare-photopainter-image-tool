@@ -40,6 +40,15 @@ declare global {
         savedCount?: number
         failed?: Array<{ fileName: string; message: string }>
       }>
+      saveBmpToDirectory: (payload: {
+        folderPath: string
+        fileName: string
+        data: Uint8Array
+      }) => Promise<{
+        canceled: boolean
+        filePath?: string
+        error?: string
+      }>
       saveProject: (payload: {
         defaultName: string
         project: PhotoPainterProjectPayload

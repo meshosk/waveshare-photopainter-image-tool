@@ -240,6 +240,24 @@ ipcMain.handle('dialog:select-directory', async () => {
   }
 })
 
+ipcMain.handle('dialog:save-bmp-to-directory', async (_event, payload) => {
+  const { folderPath, fileName, data } = payload
+  const filePath = path.join(folderPath, fileName)
+
+  try {
+    await fs.writeFile(filePath, Buffer.from(data))
+    return {
+      canceled: false,
+      filePath,
+    }
+  } catch (error) {
+    return {
+      canceled: false,
+      error: error instanceof Error ? error.message : 'Unknown write error',
+    }
+  }
+})
+
 ipcMain.handle('dialog:export-batch-bmp', async (_event, payload) => {
   const { folderPath, files } = payload
   const failed = []

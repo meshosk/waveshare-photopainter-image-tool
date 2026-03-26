@@ -8,11 +8,13 @@ type ImageThumbnailStripProps = {
   onRemove: (id: string) => void
   onDrop: (event: React.DragEvent<HTMLElement>) => void | Promise<void>
   onImageVisible: (id: string) => void
+  onCancelImport: () => void
   importProgress: {
     loadedCount: number
     totalCount: number
     remainingProcessingCount: number
     remainingRenderCount: number
+    cancelRequested: boolean
   } | null
 }
 
@@ -25,12 +27,13 @@ export function ImageThumbnailStrip({
   onRemove,
   onDrop,
   onImageVisible,
+  onCancelImport,
   importProgress,
 }: ImageThumbnailStripProps) {
   const dragDepthRef = useRef(0)
   const [isDragActive, setIsDragActive] = useState(false)
 
-  if (images.length === 0) {
+  if (images.length === 0 && !importProgress) {
     return null
   }
 
@@ -77,25 +80,37 @@ export function ImageThumbnailStrip({
       }}
     >
       {importProgress ? (
-        <div className="thumbs-progress" role="status" aria-live="polite">
-          <div
-            className="thumbs-progress-fill"
-            aria-hidden="true"
-            style={{
-              width: `${Math.max(
-                8,
-                Math.round((importProgress.loadedCount / Math.max(1, importProgress.totalCount)) * 100),
-              )}%`,
-            }}
-          />
-          <span className="thumbs-progress-label">
-            {importProgress.loadedCount}/{importProgress.totalCount} loaded
-            {importProgress.remainingProcessingCount > 0
-              ? `, ${importProgress.remainingProcessingCount} processing`
-              : importProgress.remainingRenderCount > 0
-                ? `, ${importProgress.remainingRenderCount} rendering`
-                : ', finalizing'}
-          </span>
+        <div className="thumbs-progress-row">
+          <div className="thumbs-progress" role="status" aria-live="polite">
+            <div
+              className="thumbs-progress-fill"
+              aria-hidden="true"
+              style={{
+                width: `${Math.max(
+                  8,
+                  Math.round((importProgress.loadedCount / Math.max(1, importProgress.totalCount)) * 100),
+                )}%`,
+              }}
+            />
+            <span className="thumbs-progress-label">
+              {importProgress.loadedCount}/{importProgress.totalCount} loaded
+              {importProgress.cancelRequested
+                ? ', stopping'
+                : importProgress.remainingProcessingCount > 0
+                  ? `, ${importProgress.remainingProcessingCount} processing`
+                  : importProgress.remainingRenderCount > 0
+                    ? `, ${importProgress.remainingRenderCount} rendering`
+                    : ', finalizing'}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="thumbs-progress-stop"
+            onClick={onCancelImport}
+            disabled={importProgress.cancelRequested}
+          >
+            {importProgress.cancelRequested ? 'Stopping...' : 'Stop import'}
+          </button>
         </div>
       ) : null}
 

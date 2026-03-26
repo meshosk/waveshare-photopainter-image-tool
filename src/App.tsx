@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { OUTPUT_SIZES } from './crop'
 import { loadImageFile, releaseImage } from './image'
-import { saveBmpBatch, renderBmpBatch } from './app/bmpExport'
+import { exportBmpBatch } from './app/bmpExport'
+import { BusyOverlay } from './app/components/BusyOverlay'
 import { EditorSidebar } from './app/components/EditorSidebar'
 import { ImageCropper } from './app/components/ImageCropper'
 import { ImageThumbnailStrip } from './app/components/ImageThumbnailStrip'
@@ -12,7 +13,7 @@ import { clampCrop, createImageEntry, normalizeRotation } from './app/imageEntri
 import { useCropSize } from './app/hooks/useCropSize'
 import { usePreview } from './app/hooks/usePreview'
 import { buildProjectPayload, importProjectPayload, isProjectPayload } from './app/project'
-import type { ImageEntry } from './app/types'
+import type { ExportBmpProgress, ImageEntry, ProjectBuildProgress, ProjectImportProgress } from './app/types'
 
 type ImportProgress = {
   totalFiles: number
@@ -20,6 +21,15 @@ type ImportProgress = {
   visibleCount: number
   pendingVisibleIds: string[]
   completionStatus: string | null
+  cancelRequested: boolean
+  wasCanceled: boolean
+}
+
+type BusyOverlayState = {
+  title: string
+  detail: string
+  current?: number
+  total?: number
 }
 
 const buildImportSummary = (loadedCount: number, failuresCount: number, duplicates: number) => {
@@ -46,17 +56,34 @@ const buildImportSummary = (loadedCount: number, failuresCount: number, duplicat
   return `Import failed: No supported image file found.`
 }
 
+const buildCanceledImportSummary = (loadedCount: number, failuresCount: number, duplicates: number) => {
+  const details = [
+    'Image import was stopped.',
+    loadedCount > 0 ? `Loaded ${loadedCount} image(s).` : '',
+    duplicates > 0 ? `Skipped ${duplicates} duplicate(s).` : '',
+    failuresCount > 0 ? `${failuresCount} file(s) failed to import.` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return details || 'Image import was stopped.'
+}
+
 function App() {
   const [images, setImages] = useState<ImageEntry[]>([])
   const [activeImageId, setActiveImageId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
   const [isProjectBusy, setIsProjectBusy] = useState(false)
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null)
+  const [projectBusyOverlay, setProjectBusyOverlay] = useState<BusyOverlayState | null>(null)
+  const [exportBusyOverlay, setExportBusyOverlay] = useState<BusyOverlayState | null>(null)
+  const [prefixExportFileNames, setPrefixExportFileNames] = useState(false)
   const [status, setStatus] = useState(DEFAULT_STATUS)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const projectInputRef = useRef<HTMLInputElement | null>(null)
   const cropShellRef = useRef<HTMLDivElement | null>(null)
   const imagesRef = useRef<ImageEntry[]>([])
+  const importCancelRequestedRef = useRef(false)
 
   const activeImage = useMemo(
     () => images.find((entry) => entry.id === activeImageId) ?? null,
@@ -71,10 +98,16 @@ function App() {
     ? {
         loadedCount: importProgress.visibleCount,
         totalCount: importProgress.totalFiles,
-        remainingProcessingCount: Math.max(0, importProgress.totalFiles - importProgress.processedFiles),
+        remainingProcessingCount: importProgress.wasCanceled
+          ? 0
+          : Math.max(0, importProgress.totalFiles - importProgress.processedFiles),
         remainingRenderCount: importProgress.pendingVisibleIds.length,
+        cancelRequested: importProgress.cancelRequested,
       }
     : null
+  const busyOverlay = exportBusyOverlay ?? projectBusyOverlay
+  const isUiLocked = Boolean(busyOverlay)
+  const isImageImporting = importProgress !== null
 
   const minZoomToFit =
     cropSize && activeImage?.mediaViewport
@@ -103,7 +136,10 @@ function App() {
       return
     }
 
-    if (importProgress.processedFiles < importProgress.totalFiles || importProgress.pendingVisibleIds.length > 0) {
+    if (
+      (!importProgress.wasCanceled && importProgress.processedFiles < importProgress.totalFiles) ||
+      importProgress.pendingVisibleIds.length > 0
+    ) {
       return
     }
 
@@ -177,6 +213,7 @@ function App() {
     let loadedCount = 0
     let failuresCount = 0
     let duplicates = 0
+    importCancelRequestedRef.current = false
 
     setImportProgress({
       totalFiles: files.length,
@@ -184,9 +221,19 @@ function App() {
       visibleCount: 0,
       pendingVisibleIds: [],
       completionStatus: null,
+      cancelRequested: false,
+      wasCanceled: false,
     })
+    setStatus(`Importing ${files.length} image(s)...`)
 
-    for (const file of files) {
+    for (let index = 0; index < files.length; index += 1) {
+      if (importCancelRequestedRef.current) {
+        break
+      }
+
+      const file = files[index]
+      setStatus(`Importing ${index + 1}/${files.length}: ${file.name}`)
+
       try {
         const loaded = await loadImageFile(file)
 
@@ -214,13 +261,35 @@ function App() {
       }
     }
 
-    const completionStatus = buildImportSummary(loadedCount, failuresCount, duplicates)
+    const wasCanceled = importCancelRequestedRef.current
+    const completionStatus = wasCanceled
+      ? buildCanceledImportSummary(loadedCount, failuresCount, duplicates)
+      : buildImportSummary(loadedCount, failuresCount, duplicates)
 
     setImportProgress((current) =>
       current
         ? {
             ...current,
             completionStatus,
+            cancelRequested: false,
+            wasCanceled,
+          }
+        : current,
+    )
+  }
+
+  const handleCancelImageImport = () => {
+    if (!importProgress || importProgress.cancelRequested) {
+      return
+    }
+
+    importCancelRequestedRef.current = true
+    setStatus('Stopping image import after current file...')
+    setImportProgress((current) =>
+      current
+        ? {
+            ...current,
+            cancelRequested: true,
           }
         : current,
     )
@@ -257,9 +326,29 @@ function App() {
 
     setIsProjectBusy(true)
     setStatus(`Preparing project with ${images.length} image(s)...`)
+    setProjectBusyOverlay({
+      title: 'Exporting project',
+      detail: `Encoding ${images.length} image(s) for project file...`,
+      current: 0,
+      total: images.length,
+    })
 
     try {
-      const payload = await buildProjectPayload(images)
+      const payload = await buildProjectPayload(images, (progress: ProjectBuildProgress) => {
+        const detail = `Encoding ${progress.current}/${progress.total}: ${progress.imageName}`
+        setStatus(detail)
+        setProjectBusyOverlay({
+          title: 'Exporting project',
+          detail,
+          current: progress.current,
+          total: progress.total,
+        })
+      })
+      setProjectBusyOverlay({
+        title: 'Exporting project',
+        detail: 'Saving project file to disk...',
+      })
+      setStatus('Saving project file to disk...')
       const result = await saveProjectFile(payload)
 
       if (result.kind === 'canceled') {
@@ -279,12 +368,17 @@ function App() {
       setStatus(`Project export failed: ${message}`)
     } finally {
       setIsProjectBusy(false)
+      setProjectBusyOverlay(null)
     }
   }
 
   const handleImportProject = async () => {
     setIsProjectBusy(true)
     setStatus('Loading project...')
+    setProjectBusyOverlay({
+      title: 'Importing project',
+      detail: 'Reading selected project file...',
+    })
 
     try {
       const file = projectInputRef.current?.files?.[0]
@@ -313,6 +407,17 @@ function App() {
       const imported = await importProjectPayload(
         payload,
         imagesRef.current.map((entry) => entry.image.hash),
+        (progress: ProjectImportProgress) => {
+          const action = progress.phase === 'decoding' ? 'Decoding' : 'Restoring'
+          const detail = `${action} ${progress.current}/${progress.total}${progress.imageName ? `: ${progress.imageName}` : '...'}`
+          setStatus(detail)
+          setProjectBusyOverlay({
+            title: 'Importing project',
+            detail,
+            current: progress.current,
+            total: progress.total,
+          })
+        },
       )
 
       appendEntries(imported.loadedEntries)
@@ -349,6 +454,7 @@ function App() {
         projectInputRef.current.value = ''
       }
       setIsProjectBusy(false)
+      setProjectBusyOverlay(null)
     }
   }
 
@@ -403,10 +509,28 @@ function App() {
 
     setIsExporting(true)
     setStatus(`Preparing ${images.length} export(s) for PhotoPainter...`)
+    setExportBusyOverlay({
+      title: 'Exporting BMP files',
+      detail: `Preparing ${images.length} export(s) for PhotoPainter...`,
+      current: 0,
+      total: images.length,
+    })
 
     try {
-      const files = await renderBmpBatch(images, setStatus)
-      const result = await saveBmpBatch(files, setStatus)
+      const result = await exportBmpBatch(images, { prefixWithFiveDigitNumber: prefixExportFileNames }, (progress: ExportBmpProgress) => {
+        const detail =
+          progress.phase === 'rendering'
+            ? `Rendering ${progress.current}/${progress.total}: ${progress.imageName}`
+            : `Saving ${progress.current}/${progress.total}: ${progress.fileName}`
+
+        setStatus(detail)
+        setExportBusyOverlay({
+          title: 'Exporting BMP files',
+          detail,
+          current: progress.current,
+          total: progress.total,
+        })
+      })
 
       if (result.kind === 'canceled') {
         setStatus('Export was canceled.')
@@ -430,16 +554,20 @@ function App() {
       setStatus(`Export failed: ${message}`)
     } finally {
       setIsExporting(false)
+      setExportBusyOverlay(null)
     }
   }
 
   return (
-    <div className="shell">
+    <div className={`shell ${isUiLocked ? 'locked' : ''}`}>
       <EditorSidebar
         activeImage={activeImage}
         imagesCount={images.length}
         isExporting={isExporting}
         isProjectBusy={isProjectBusy}
+        isImageImporting={isImageImporting}
+        isUiLocked={isUiLocked}
+        prefixExportFileNames={prefixExportFileNames}
         status={status}
         effectiveMinZoom={effectiveMinZoom}
         onOpenImages={() => inputRef.current?.click()}
@@ -480,6 +608,7 @@ function App() {
             constrainToImage: value,
           }))
         }
+        onPrefixExportFileNamesToggle={setPrefixExportFileNames}
         onExportAll={() => {
           void handleExportAll()
         }}
@@ -494,6 +623,7 @@ function App() {
           onDrop={handleDrop}
           onImageVisible={handleThumbnailVisible}
           importProgress={importIndicator}
+          onCancelImport={handleCancelImageImport}
         />
 
         <ImageCropper
@@ -538,6 +668,15 @@ function App() {
 
         <PreviewPanel previewUrl={previewUrl} />
       </main>
+
+      {busyOverlay ? (
+        <BusyOverlay
+          title={busyOverlay.title}
+          detail={busyOverlay.detail}
+          current={busyOverlay.current}
+          total={busyOverlay.total}
+        />
+      ) : null}
     </div>
   )
 }

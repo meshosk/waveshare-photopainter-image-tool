@@ -7,6 +7,9 @@ type EditorSidebarProps = {
   imagesCount: number
   isExporting: boolean
   isProjectBusy: boolean
+  isImageImporting: boolean
+  isUiLocked: boolean
+  prefixExportFileNames: boolean
   status: string
   effectiveMinZoom: number
   onOpenImages: () => void
@@ -21,6 +24,7 @@ type EditorSidebarProps = {
   onZoomStep: (delta: number) => void
   onRotate: (delta: number) => void
   onConstrainToggle: (value: boolean) => void
+  onPrefixExportFileNamesToggle: (value: boolean) => void
   onExportAll: () => void
 }
 
@@ -31,6 +35,9 @@ export function EditorSidebar({
   imagesCount,
   isExporting,
   isProjectBusy,
+  isImageImporting,
+  isUiLocked,
+  prefixExportFileNames,
   status,
   effectiveMinZoom,
   onOpenImages,
@@ -45,6 +52,7 @@ export function EditorSidebar({
   onZoomStep,
   onRotate,
   onConstrainToggle,
+  onPrefixExportFileNamesToggle,
   onExportAll,
 }: EditorSidebarProps) {
   return (
@@ -60,21 +68,21 @@ export function EditorSidebar({
 
       <section className="panel stack">
         <h2>Input</h2>
-        <button className="primary" type="button" onClick={onOpenImages}>
+        <button className="primary" type="button" onClick={onOpenImages} disabled={isUiLocked}>
           Select images
         </button>
         <button
-          className="secondary"
+          className={`secondary ${isImageImporting ? 'secondary-disabled-import' : ''}`}
           type="button"
-          disabled={isProjectBusy || isExporting || imagesCount === 0}
+          disabled={isProjectBusy || isExporting || isImageImporting || imagesCount === 0}
           onClick={onExportProject}
         >
           {isProjectBusy ? 'Working...' : 'Export project (.photopaint)'}
         </button>
         <button
-          className="secondary"
+          className={`secondary ${isImageImporting ? 'secondary-disabled-import' : ''}`}
           type="button"
-          disabled={isProjectBusy || isExporting}
+          disabled={isProjectBusy || isExporting || isImageImporting}
           onClick={onOpenProject}
         >
           {isProjectBusy ? 'Working...' : 'Import project (.photopaint)'}
@@ -103,7 +111,7 @@ export function EditorSidebar({
           <button
             type="button"
             className={activeImage?.orientation === 'landscape' ? 'active' : ''}
-            disabled={!activeImage}
+              disabled={!activeImage || isUiLocked}
             onClick={() => onOrientationChange('landscape')}
           >
             800 x 480
@@ -111,7 +119,7 @@ export function EditorSidebar({
           <button
             type="button"
             className={activeImage?.orientation === 'portrait' ? 'active' : ''}
-            disabled={!activeImage}
+              disabled={!activeImage || isUiLocked}
             onClick={() => onOrientationChange('portrait')}
           >
             480 x 800
@@ -129,7 +137,7 @@ export function EditorSidebar({
           step={0.01}
           type="range"
           value={activeImage?.zoom ?? effectiveMinZoom}
-          disabled={!activeImage}
+          disabled={!activeImage || isUiLocked}
           onChange={(event) => onZoomChange(Number(event.target.value))}
         />
 
@@ -137,7 +145,7 @@ export function EditorSidebar({
           <button
             type="button"
             className="secondary"
-            disabled={!activeImage}
+            disabled={!activeImage || isUiLocked}
             onClick={() => onZoomStep(-0.1)}
           >
             Zoom out
@@ -145,7 +153,7 @@ export function EditorSidebar({
           <button
             type="button"
             className="secondary"
-            disabled={!activeImage}
+            disabled={!activeImage || isUiLocked}
             onClick={() => onZoomStep(0.1)}
           >
             Zoom in
@@ -153,10 +161,20 @@ export function EditorSidebar({
         </div>
 
         <div className="zoom-row">
-          <button type="button" className="secondary" disabled={!activeImage} onClick={() => onRotate(-90)}>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!activeImage || isUiLocked}
+            onClick={() => onRotate(-90)}
+          >
             Rotate left 90
           </button>
-          <button type="button" className="secondary" disabled={!activeImage} onClick={() => onRotate(90)}>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!activeImage || isUiLocked}
+            onClick={() => onRotate(90)}
+          >
             Rotate right 90
           </button>
         </div>
@@ -168,7 +186,7 @@ export function EditorSidebar({
             id="constrain-crop"
             type="checkbox"
             checked={activeImage?.constrainToImage ?? false}
-            disabled={!activeImage}
+            disabled={!activeImage || isUiLocked}
             onChange={(event) => onConstrainToggle(event.target.checked)}
           />
           <span>Constrain crop to image</span>
@@ -187,6 +205,16 @@ export function EditorSidebar({
         >
           {isExporting ? 'Exporting...' : `Export all (${imagesCount})`}
         </button>
+        <label className="checkbox-control" htmlFor="prefix-export-names">
+          <input
+            id="prefix-export-names"
+            type="checkbox"
+            checked={prefixExportFileNames}
+            disabled={imagesCount === 0 || isExporting || isProjectBusy}
+            onChange={(event) => onPrefixExportFileNamesToggle(event.target.checked)}
+          />
+          <span>Prefix exported files with random 5-digit numbers</span>
+        </label>
         <p className="muted">{status}</p>
       </section>
 

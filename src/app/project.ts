@@ -1,17 +1,41 @@
 import type { Area } from 'react-easy-crop'
 import { MAX_ZOOM, MIN_ZOOM, INITIAL_CROP } from './constants'
 import { createImageEntry, createInitialArea, normalizeRotation } from './imageEntries'
-import type { ImageEntry, ProjectEntrySettings, ProjectImportResult } from './types'
+import type {
+  ImageEntry,
+  ProjectBuildProgress,
+  ProjectEntrySettings,
+  ProjectImportProgress,
+  ProjectImportResult,
+} from './types'
 import type { LoadedImage } from '../image'
 import { releaseImage } from '../image'
 
-export const buildProjectPayload = async (images: ImageEntry[]): Promise<PhotoPainterProjectPayload> => {
-  const imageRecords = new Map<string, PhotoPainterProjectPayload['images'][number]>()
+export const buildProjectPayload = async (
+  images: ImageEntry[],
+  onProgress?: (progress: ProjectBuildProgress) => void,
+): Promise<PhotoPainterProjectPayload> => {
+  const uniqueEntries: ImageEntry[] = []
+  const knownHashes = new Set<string>()
 
   for (const entry of images) {
-    if (imageRecords.has(entry.image.hash)) {
+    if (knownHashes.has(entry.image.hash)) {
       continue
     }
+
+    knownHashes.add(entry.image.hash)
+    uniqueEntries.push(entry)
+  }
+
+  const imageRecords = new Map<string, PhotoPainterProjectPayload['images'][number]>()
+
+  for (let index = 0; index < uniqueEntries.length; index += 1) {
+    const entry = uniqueEntries[index]
+    onProgress?.({
+      current: index + 1,
+      total: uniqueEntries.length,
+      imageName: entry.image.name,
+    })
 
     const bytes = new Uint8Array(await entry.image.blob.arrayBuffer())
     imageRecords.set(entry.image.hash, {
@@ -65,11 +89,20 @@ export const isProjectPayload = (value: unknown): value is PhotoPainterProjectPa
 export const importProjectPayload = async (
   payload: PhotoPainterProjectPayload,
   existingHashes: Iterable<string>,
+  onProgress?: (progress: ProjectImportProgress) => void,
 ): Promise<ProjectImportResult> => {
   const decodedByHash = new Map<string, LoadedImage>()
   let decodeFailed = 0
 
-  for (const projectImage of payload.images) {
+  for (let index = 0; index < payload.images.length; index += 1) {
+    const projectImage = payload.images[index]
+    onProgress?.({
+      phase: 'decoding',
+      current: index + 1,
+      total: payload.images.length,
+      imageName: projectImage.name,
+    })
+
     if (decodedByHash.has(projectImage.hash)) {
       continue
     }
@@ -98,7 +131,15 @@ export const importProjectPayload = async (
   let duplicates = 0
   let skippedMissing = 0
 
-  for (const entry of payload.entries) {
+  for (let index = 0; index < payload.entries.length; index += 1) {
+    const entry = payload.entries[index]
+    onProgress?.({
+      phase: 'restoring',
+      current: index + 1,
+      total: payload.entries.length,
+      imageName: decodedByHash.get(entry.imageHash)?.name,
+    })
+
     const image = decodedByHash.get(entry.imageHash)
     if (!image) {
       skippedMissing += 1

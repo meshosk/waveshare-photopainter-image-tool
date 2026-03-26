@@ -3,74 +3,150 @@ import { applyPaletteWithDithering } from '../color'
 import { OUTPUT_SIZES, renderCroppedImage } from '../crop'
 import { getImageElement } from '../image'
 import { buildWaveshareFileName, forceOpaqueWhite, saveBmpInBrowser, uniquifyFileNames } from './fileHelpers'
-import type { BatchExportFile, ImageEntry, SaveBmpBatchResult } from './types'
+import type { BatchExportFile, ExportBmpProgress, ImageEntry, SaveBmpBatchResult } from './types'
 
-export const renderBmpBatch = async (
-  images: ImageEntry[],
-  onProgress?: (status: string) => void,
-): Promise<BatchExportFile[]> => {
-  const encodedFiles: BatchExportFile[] = []
-
-  for (let index = 0; index < images.length; index += 1) {
-    const entry = images[index]
-    onProgress?.(`Rendering image ${index + 1}/${images.length}: ${entry.image.name}`)
-
-    const sourceImage = await getImageElement(entry.image.src)
-    const entryOutput = OUTPUT_SIZES[entry.orientation]
-    const cropped = await renderCroppedImage(
-      sourceImage,
-      entry.croppedAreaPixels,
-      entryOutput.width,
-      entryOutput.height,
-      undefined,
-      entry.rotationDeg,
-    )
-    forceOpaqueWhite(cropped)
-    const dithered = applyPaletteWithDithering(cropped)
-    const bmp = imageDataToBmp(dithered)
-    encodedFiles.push({
-      fileName: buildWaveshareFileName(entry.image.name),
-      data: bmp,
-    })
-  }
-
-  return uniquifyFileNames(encodedFiles)
+type PlannedExport = {
+  entry: ImageEntry
+  fileName: string
 }
 
-export const saveBmpBatch = async (
-  files: BatchExportFile[],
-  onProgress?: (status: string) => void,
+const buildExportPlan = (images: ImageEntry[], options?: { prefixWithFiveDigitNumber?: boolean }): PlannedExport[] => {
+  const uniqueFiles = uniquifyFileNames(
+    images.map((entry) => ({
+      fileName: buildWaveshareFileName(entry.image.name),
+      data: new Uint8Array(0),
+    })),
+  )
+  const numericPrefixes = options?.prefixWithFiveDigitNumber ? createFiveDigitPrefixes(images.length) : null
+
+  return images.map((entry, index) => ({
+    entry,
+    fileName: numericPrefixes ? `${numericPrefixes[index]}_${uniqueFiles[index].fileName}` : uniqueFiles[index].fileName,
+  }))
+}
+
+const createFiveDigitPrefixes = (count: number) => {
+  const usedNumbers = new Set<number>()
+  const prefixes: string[] = []
+
+  while (prefixes.length < count) {
+    const candidate = Math.floor(Math.random() * 90000) + 10000
+    if (usedNumbers.has(candidate)) {
+      continue
+    }
+
+    usedNumbers.add(candidate)
+    prefixes.push(String(candidate))
+  }
+
+  return prefixes
+}
+
+const renderBmpFile = async (entry: ImageEntry, fileName: string): Promise<BatchExportFile> => {
+  const sourceImage = await getImageElement(entry.image.src)
+  const entryOutput = OUTPUT_SIZES[entry.orientation]
+  const cropped = await renderCroppedImage(
+    sourceImage,
+    entry.croppedAreaPixels,
+    entryOutput.width,
+    entryOutput.height,
+    undefined,
+    entry.rotationDeg,
+  )
+
+  forceOpaqueWhite(cropped)
+  const dithered = applyPaletteWithDithering(cropped)
+
+  return {
+    fileName,
+    data: imageDataToBmp(dithered),
+  }
+}
+
+const yieldToBrowser = async () => {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0)
+  })
+}
+
+export const exportBmpBatch = async (
+  images: ImageEntry[],
+  options?: { prefixWithFiveDigitNumber?: boolean },
+  onProgress?: (progress: ExportBmpProgress) => void,
 ): Promise<SaveBmpBatchResult> => {
+  const plannedExports = buildExportPlan(images, options)
   const bridge = window.desktopBridge
 
-  if (bridge?.selectDirectory && bridge?.exportBatchBmp) {
+  if (bridge?.selectDirectory && (bridge?.saveBmpToDirectory || bridge?.exportBatchBmp)) {
     const selected = await bridge.selectDirectory()
     if (selected.canceled || !selected.folderPath) {
       return { kind: 'canceled' }
     }
 
-    const result = await bridge.exportBatchBmp({
-      folderPath: selected.folderPath,
-      files,
-    })
+    let savedCount = 0
 
-    if (result.canceled) {
-      return { kind: 'canceled' }
-    }
+    for (let index = 0; index < plannedExports.length; index += 1) {
+      const { entry, fileName } = plannedExports[index]
+      onProgress?.({
+        phase: 'rendering',
+        current: index + 1,
+        total: plannedExports.length,
+        imageName: entry.image.name,
+        fileName,
+      })
+      const file = await renderBmpFile(entry, fileName)
+      onProgress?.({
+        phase: 'saving',
+        current: index + 1,
+        total: plannedExports.length,
+        imageName: entry.image.name,
+        fileName: file.fileName,
+      })
 
-    const failures = result.failed ?? []
-    if (failures.length > 0) {
-      return {
-        kind: 'partial',
-        savedCount: result.savedCount ?? 0,
-        totalCount: files.length,
+      if (bridge.saveBmpToDirectory) {
+        const result = await bridge.saveBmpToDirectory({
+          folderPath: selected.folderPath,
+          fileName: file.fileName,
+          data: file.data,
+        })
+
+        if (result.error) {
+          return {
+            kind: 'partial',
+            savedCount,
+            totalCount: plannedExports.length,
+          }
+        }
+      } else {
+        const result = await bridge.exportBatchBmp({
+          folderPath: selected.folderPath,
+          files: [file],
+        })
+
+        if (result.canceled) {
+          return { kind: 'canceled' }
+        }
+
+        if ((result.failed ?? []).length > 0) {
+          return {
+            kind: 'partial',
+            savedCount,
+            totalCount: plannedExports.length,
+          }
+        }
+      }
+
+      savedCount += 1
+
+      if ((index + 1) % 8 === 0) {
+        await yieldToBrowser()
       }
     }
 
     return {
       kind: 'saved',
-      savedCount: result.savedCount ?? files.length,
-      folderPath: result.folderPath ?? selected.folderPath,
+      savedCount,
+      folderPath: selected.folderPath,
     }
   }
 
@@ -92,30 +168,68 @@ export const saveBmpBatch = async (
       throw error
     }
 
-    for (let index = 0; index < files.length; index += 1) {
-      const file = files[index]
-      onProgress?.(`Saving ${index + 1}/${files.length}: ${file.fileName}`)
+    for (let index = 0; index < plannedExports.length; index += 1) {
+      const { entry, fileName } = plannedExports[index]
+      onProgress?.({
+        phase: 'rendering',
+        current: index + 1,
+        total: plannedExports.length,
+        imageName: entry.image.name,
+        fileName,
+      })
+      const file = await renderBmpFile(entry, fileName)
+      onProgress?.({
+        phase: 'saving',
+        current: index + 1,
+        total: plannedExports.length,
+        imageName: entry.image.name,
+        fileName: file.fileName,
+      })
       const fileHandle = await dirHandle.getFileHandle(file.fileName, { create: true })
       const writable = await fileHandle.createWritable()
       await writable.write(new Blob([file.data.buffer as ArrayBuffer], { type: 'image/bmp' }))
       await writable.close()
+
+      if ((index + 1) % 8 === 0) {
+        await yieldToBrowser()
+      }
     }
 
     return {
       kind: 'saved',
-      savedCount: files.length,
+      savedCount: plannedExports.length,
     }
   }
 
-  for (const file of files) {
+  for (let index = 0; index < plannedExports.length; index += 1) {
+    const { entry, fileName } = plannedExports[index]
+    onProgress?.({
+      phase: 'rendering',
+      current: index + 1,
+      total: plannedExports.length,
+      imageName: entry.image.name,
+      fileName,
+    })
+    const file = await renderBmpFile(entry, fileName)
+    onProgress?.({
+      phase: 'saving',
+      current: index + 1,
+      total: plannedExports.length,
+      imageName: entry.image.name,
+      fileName: file.fileName,
+    })
     const result = await saveBmpInBrowser(file.fileName, file.data)
     if (result.canceled) {
       return { kind: 'canceled' }
+    }
+
+    if ((index + 1) % 8 === 0) {
+      await yieldToBrowser()
     }
   }
 
   return {
     kind: 'downloaded',
-    savedCount: files.length,
+    savedCount: plannedExports.length,
   }
 }

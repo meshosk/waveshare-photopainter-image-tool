@@ -31,6 +31,27 @@ export type BatchExportFile = {
   data: Uint8Array
 }
 
+export type ExportBmpProgress = {
+  phase: 'rendering' | 'saving'
+  current: number
+  total: number
+  imageName: string
+  fileName: string
+}
+
+export type ProjectBuildProgress = {
+  current: number
+  total: number
+  imageName: string
+}
+
+export type ProjectImportProgress = {
+  phase: 'decoding' | 'restoring'
+  current: number
+  total: number
+  imageName?: string
+}
+
 export type ProjectEntrySettings = {
   crop: CropPoint
   zoom: number
