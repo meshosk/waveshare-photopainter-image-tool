@@ -24,6 +24,7 @@ services:
     working_dir: /project
     volumes:
       - .:/project
+      - build-win-node-modules:/project/node_modules
       - electron-cache:/root/.cache/electron
       - electron-builder-cache:/root/.cache/electron-builder
     environment:
@@ -33,5 +34,6 @@ services:
     command: sh -lc "npm install && npm run build:win"
 
 volumes:
+  build-win-node-modules:
   electron-cache:
   electron-builder-cache:

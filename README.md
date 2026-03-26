@@ -158,7 +158,8 @@ npm run build:win
 ```
 
 - `npm run build:mac` builds an unsigned macOS app bundle directory
-- `npm run build:win` builds a portable Windows `.exe`, not an installer
+- `npm run build:win` builds a portable Windows `x64` (`amd64`) `.exe`, not an installer
+- local `npm run build:win` forces a Windows `x64` portable build and leaves only one `.exe` in `release/`
 
 These commands require a matching host environment with Node.js installed.
 
