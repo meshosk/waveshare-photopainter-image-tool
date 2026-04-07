@@ -1,118 +1,53 @@
 # Disclaimer
 
-Whole app is coded by AI... yeah, I know... it was just one experiment... 
+Whole app is coded by AI... yeah, I know... I want to try it... 
 
 # PhotoPainter Converter
+So you need to convert images for your brand neue [WaveShare PhotoPainter](https://www.waveshare.com/wiki/PhotoPainter) or you have somewhere  E Ink Spectra 6 (E6) Full color and you are in __need__ for __THE CONVERTER__?
 
-Desktop and browser tool for preparing images for Waveshare PhotoPainter panels.
+Do not search any further! You have just found it!
 
-The current UI is titled `Waveshare PhotoPainter image tool` and is built around a multi-image workflow: import several source files, tune crop per image, preview the final dithered result, then export all BMP files in one run.
-
-## What The App Does
+This app does it all:
 
 - Imports one or more source images at once
-- Supports drag and drop directly into the workspace
-- Accepts JPG, JPEG, PNG, WebP, BMP, GIF, HEIC, and HEIF
-- Converts unsupported HEIC and HEIF files to PNG during import when needed
+- Supported formats: JPG, JPEG, PNG, WebP, BMP, GIF, HEIC, and HEIF
+- Supports drag and drop directly into the "working gallery"
 - Detects duplicate source images by content hash and skips them
 - Lets you switch each image between `800 x 480` landscape and `480 x 800` portrait
 - Provides crop, zoom, and 90 degree rotation per image
 - Optionally constrains the crop frame so it always stays inside the source image
 - Shows a live preview of the final dithered output
 - Reduces the image to the 7-color PhotoPainter palette with Floyd-Steinberg dithering
-- Exports 24-bit BMP files with sanitized unique file names
-- Saves and reloads full working sessions as `.photopaint` project files
+- Exports 24-bit BMP files in needed color format for the E-INK
+- Saves and reloads full working sessions as `.photopaint` project files, so you cand add up images in future
 
-## Current UI
+## The UI
 
-The interface is split into three main areas.
+So the UI looks like this:
 
-### Sidebar
+![alt text](images/the-ui.png)
 
-The left sidebar contains:
+There are two main parts:
 
-- `Select images`
-- `Export project (.photopaint)`
-- `Import project (.photopaint)`
-- Orientation switch for the active image
-- Zoom slider plus zoom in and zoom out buttons
-- `Rotate left 90` and `Rotate right 90`
-- `Constrain crop to image`
-- `Export all (N)` batch export action
-- Status text for import, project operations, and export progress
-- Palette and source image metadata for the active image
+- THE LEFT panel - contains some setting, it can be scrolled down!
+- THE RIGHT panel - show working gallery and crop per image
 
-### Thumbnail Strip
+Some operation tips:
 
-When images are loaded, the app shows a horizontal strip of thumbnails.
+- You drop images you want to add to edit set onto "Drag one or more imaes here" or you selectem using button "Select images". Importing images can take a while (it depends on format).
+- Import and Export of wokring images set is done using "Export project (.photopaint)" and "Import project (.photopaint)" buttons
+- To export images in the format for eink use button "Export all". If is not visible just scroll left panel down. There is chechbox to set random number prefix, so images are shuffled for eink.
+- Settings of crop and orientation are set per image
 
-- Click a thumbnail to make it active
-- Each card includes the source file name
-- Each card has a `Remove` button
-- Crop, orientation, zoom, rotation, and constrain settings are tracked separately per image
+# What to tdo if it works?
+Nothing you are welcome! ... Adding a star would make me very happy.
 
-### Crop And Preview Area
+# Found something wrong?
+Well... you can try to open issue of pull request.
 
-- The center panel is the crop workspace powered by `react-easy-crop`
-- You can also drag files directly onto this area to import them
-- The crop frame automatically matches the selected PhotoPainter aspect ratio
-- The lower preview panel shows the processed result after crop, rotation, white background fill, palette reduction, and dithering
 
-## Typical Workflow
 
-1. Click `Select images` or drag files into the app.
-2. Pick the active image from the thumbnail strip.
-3. Choose `800 x 480` or `480 x 800` for that image.
-4. Move the crop, change zoom, and rotate in 90 degree steps as needed.
-5. Enable `Constrain crop to image` if you want to prevent empty margins around the frame.
-6. Check the preview panel.
-7. Repeat for the remaining thumbnails.
-8. Click `Export all` to generate BMP files for all loaded images.
-
-## Project Files
-
-The app can store and reload the full working state as a `.photopaint` file.
-
-Project export includes:
-
-- Embedded image data
-- Crop position
-- Zoom value
-- Cropped area in pixels
-- Orientation
-- Rotation in degrees
-- `Constrain crop to image` state
-- Export timestamp
-
-Project import validates the payload structure and then:
-
-- restores image entries and their settings
-- skips duplicate images already present in the session
-- skips missing or invalid image records
-- reports decode failures in the status text
-
-In the Electron desktop app, project export uses native save dialogs. In browser preview mode, the project is downloaded as a file.
-
-## Export Behavior
-
-Every export goes through this pipeline:
-
-1. Crop the selected source region.
-2. Apply the selected 90 degree rotation.
-3. Resize to `800 x 480` or `480 x 800`.
-4. Replace transparent pixels with opaque white.
-5. Map colors to the PhotoPainter palette.
-6. Apply Floyd-Steinberg dithering.
-7. Encode the result as an uncompressed 24-bit BMP.
-
-Export naming rules:
-
-- source file names are sanitized for Windows-safe BMP output
-- duplicate output names are automatically uniquified with `_1`, `_2`, and so on
-
-In the Electron desktop app, batch export writes all files into a selected folder. In browser mode, the app uses the File System Access API when available and falls back to regular downloads otherwise.
-
-## Development Preview
+# Development SIDE
 
 This repository supports browser preview without installing Node.js on the host.
 
