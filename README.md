@@ -39,12 +39,11 @@ Some operation tips:
 - To export images in the format for eink use button "Export all". If is not visible just scroll left panel down. There is chechbox to set random number prefix, so images are shuffled for eink.
 - Settings of crop and orientation are set per image
 
-# What to tdo if it works?
+# What to do if it works?
 Nothing you are welcome! ... Adding a star would make me very happy.
 
 # Found something wrong?
 Well... you can try to open issue of pull request.
-
 
 
 # Development SIDE
